@@ -13,10 +13,14 @@ from ..lark_kanban import (
     LarkKanbanConfig,
     build_create_board_plan,
     create_lark_kanban_board,
+    lark_kanban_feasibility_cases,
     lark_kanban_heartbeat,
+    lark_kanban_operator_card_fields,
     lark_kanban_schema_payload,
+    lark_kanban_ux_task,
     render_lark_kanban_markdown,
     sample_lark_kanban_task,
+    seed_lark_kanban_records,
     seed_lark_kanban_task,
 )
 
@@ -58,6 +62,17 @@ def register_lark_kanban_commands(
     seed.add_argument("--worker-command", default="")
     seed.add_argument("--workdir", default="")
     seed.add_argument("--execute", action="store_true", help="Actually upsert the sample record.")
+
+    cases = sub.add_parser(
+        "seed-cases",
+        help="Seed the UX optimization task plus feasibility cases. Dry-run unless --execute.",
+    )
+    add_subcommand_format(cases)
+    _add_lark_target_args(cases)
+    cases.add_argument("--goal-id", default="loopx-lark-kanban-ux")
+    cases.add_argument("--worker-command", default="")
+    cases.add_argument("--workdir", default="")
+    cases.add_argument("--execute", action="store_true", help="Actually upsert the records.")
 
     heartbeat = sub.add_parser(
         "heartbeat",
@@ -187,6 +202,23 @@ def handle_lark_kanban_command(
                 execute=bool(args.execute),
             )
             payload["execute"] = bool(args.execute)
+        elif args.lark_kanban_command == "seed-cases":
+            task = lark_kanban_ux_task(
+                goal_id=args.goal_id,
+                worker_command=args.worker_command,
+                workdir=args.workdir,
+            )
+            records = [task] + lark_kanban_feasibility_cases(
+                goal_id=f"{args.goal_id}-cases",
+                workdir=args.workdir,
+            )
+            payload = seed_lark_kanban_records(
+                _target_config(args),
+                records=records,
+                execute=bool(args.execute),
+            )
+            payload["execute"] = bool(args.execute)
+            payload["operator_card_fields"] = lark_kanban_operator_card_fields()
         elif args.lark_kanban_command == "heartbeat":
             fixture = _load_fixture(args.fixture) if args.fixture else None
             payload = lark_kanban_heartbeat(

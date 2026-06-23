@@ -15,6 +15,7 @@ DEFAULT_TABLE_NAME = "LoopX Control Plane"
 DEFAULT_AGENT_ID = "codex-kanban-worker"
 DEFAULT_CLI_BIN = "lark-cli"
 DEFAULT_STATUS_QUEUE_VIEW = "Worker Queue"
+OPERATOR_CARD_FIELDS = ["Task", "Claim", "Priority", "User Gate", "Evidence", "Status"]
 
 STATUS_TODO = "Todo"
 STATUS_CLAIMED = "Claimed"
@@ -171,6 +172,18 @@ def lark_kanban_schema_payload(*, table_name: str = DEFAULT_TABLE_NAME) -> dict[
         },
         "fields": lark_kanban_field_definitions(),
         "views": lark_kanban_views(),
+        "operator_view": {
+            "kanban_card_fields": OPERATOR_CARD_FIELDS,
+            "reason": (
+                "Keep the human-facing Kanban card small; retain the full task "
+                "context in the record detail and All Tasks grid."
+            ),
+            "configuration_note": (
+                "Lark's current shortcut CLI exposes Kanban cover settings, but "
+                "not the card field visibility list. Configure card fields in "
+                "the Lark UI until that API is available in lark-cli."
+            ),
+        },
         "heartbeat_model": {
             "direct_lark_trigger": False,
             "trigger_reason": (
@@ -208,6 +221,157 @@ def sample_lark_kanban_task(
         "Last Error": "",
         "Last Result Code": None,
     }
+
+
+def lark_kanban_operator_card_fields() -> list[str]:
+    return list(OPERATOR_CARD_FIELDS)
+
+
+def lark_kanban_ux_task(
+    *,
+    goal_id: str = "loopx-lark-kanban-ux",
+    worker_command: str = "",
+    workdir: str = "",
+) -> dict[str, Any]:
+    return {
+        "Task": "Optimize LoopX Kanban control-plane UX",
+        "Status": STATUS_USER_GATE,
+        "Claim": CLAIM_HUMAN,
+        "Claimed By": "",
+        "Priority": "P1",
+        "Task Class": "user_gate",
+        "Action Kind": "decide",
+        "LoopX Goal ID": goal_id,
+        "LoopX Todo ID": "todo_lark_kanban_ux",
+        "Scope": (
+            "Use LoopX itself to reduce operator attention cost while preserving "
+            "complete structured context in Lark Base."
+        ),
+        "User Gate": (
+            "Approve the simplified Kanban card profile and heartbeat/subagent "
+            "worker model for this prototype."
+        ),
+        "Handoff": (
+            "After approval, move this row to Todo/Unclaimed and let an agent "
+            "claim it, produce evidence, and leave the row in Review."
+        ),
+        "Evidence": "Awaiting human gate pass.",
+        "Run History": "",
+        "Worker Command": worker_command,
+        "Workdir": workdir,
+        "Last Error": "",
+        "Last Result Code": None,
+    }
+
+
+def lark_kanban_feasibility_cases(
+    *,
+    goal_id: str = "loopx-lark-kanban-feasibility",
+    workdir: str = "",
+) -> list[dict[str, Any]]:
+    common = {
+        "Status": STATUS_REVIEW,
+        "Claim": CLAIM_AGENT,
+        "Claimed By": DEFAULT_AGENT_ID,
+        "Priority": "P1",
+        "LoopX Goal ID": goal_id,
+        "Workdir": workdir,
+        "Last Error": "",
+        "Last Result Code": 0,
+    }
+    return [
+        {
+            **common,
+            "Task": "Case: notes.zaynjarvis.com LoopX architecture decision",
+            "Task Class": "advancement_task",
+            "Action Kind": "publish_decision_note",
+            "LoopX Todo ID": "todo_case_notes_arch_decision",
+            "Scope": (
+                "Publish a public-safe decision note describing LoopX axioms, "
+                "control-plane shape, and Lark Kanban adapter tradeoffs."
+            ),
+            "User Gate": "Human approves final wording before publishing.",
+            "Handoff": (
+                "Draft the architecture/decision note, keep source-of-truth "
+                "fields in the board, and publish only a concise public version."
+            ),
+            "Evidence": (
+                "Feasible: the board row captures task, gate, scope, handoff, "
+                "and public evidence pointer for a notes.zaynjarvis.com publish lane."
+            ),
+            "Run History": "case seeded: public decision note lane is representable",
+            "Worker Command": "",
+        },
+        {
+            **common,
+            "Task": "Case: P1/P2 human gate timeout with default fallback",
+            "Task Class": "user_gate",
+            "Action Kind": "decide_with_timeout",
+            "LoopX Todo ID": "todo_case_gate_timeout_fallback",
+            "Scope": (
+                "Model a human decision that should not block the loop forever; "
+                "P1/P2 gates can fall back to a default after timeout."
+            ),
+            "User Gate": (
+                "Choose explicit decision, or allow the default fallback to fire "
+                "after the configured timeout."
+            ),
+            "Handoff": (
+                "Record the gate question in User Gate; record fallback policy "
+                "in Handoff; apply only via loop state transition."
+            ),
+            "Evidence": (
+                "Feasible: User Gate plus Handoff can separate human choice from "
+                "the structured state transition that actually changes memory."
+            ),
+            "Run History": "case seeded: gate timeout/fallback lane is representable",
+            "Worker Command": "",
+        },
+        {
+            **common,
+            "Task": "Case: cross-session compact memory through OV",
+            "Task Class": "continuous_monitor",
+            "Action Kind": "memory_handoff",
+            "LoopX Todo ID": "todo_case_ov_compact_memory",
+            "Scope": (
+                "Carry loop context across sessions through an external compact "
+                "memory surface instead of relying on raw transcript recall."
+            ),
+            "User Gate": "Confirm which facts are durable enough to enter compact memory.",
+            "Handoff": (
+                "Store concise decisions and state deltas externally; keep raw "
+                "session details out of the Kanban card."
+            ),
+            "Evidence": (
+                "Feasible: the Kanban row can point to compact memory writes while "
+                "remaining a simple operator control surface."
+            ),
+            "Run History": "case seeded: OV compact-memory lane is representable",
+            "Worker Command": "",
+        },
+        {
+            **common,
+            "Task": "Case: output quality vs token and attention cost eval",
+            "Task Class": "advancement_task",
+            "Action Kind": "define_eval",
+            "LoopX Todo ID": "todo_case_quality_cost_eval",
+            "Scope": (
+                "Define a loop benchmark that scores delivered output against "
+                "token spend and human attention cost."
+            ),
+            "User Gate": "Approve the cost dimensions before using the eval as a gate.",
+            "Handoff": (
+                "Use Evidence for results, Run History for compact attempts, and "
+                "Priority to decide whether a rerun is worth more attention."
+            ),
+            "Evidence": (
+                "Feasible: Base fields support an eval lane that keeps quality, "
+                "token cost, and attention cost visible without bloating the card."
+            ),
+            "Run History": "case seeded: quality/cost eval lane is representable",
+            "Worker Command": "",
+        },
+    ]
 
 
 def default_subprocess_runner(
@@ -796,6 +960,35 @@ def seed_lark_kanban_task(
         "record_id": record_id,
         "command": result,
         "task": task,
+    }
+
+
+def seed_lark_kanban_records(
+    config: LarkKanbanConfig,
+    *,
+    records: list[dict[str, Any]],
+    execute: bool = False,
+    runner: CommandRunner = default_subprocess_runner,
+) -> dict[str, Any]:
+    results: list[dict[str, Any]] = []
+    ok = True
+    for record in records:
+        result = seed_lark_kanban_task(
+            config,
+            task=record,
+            execute=execute,
+            runner=runner,
+        )
+        results.append(result)
+        ok = ok and bool(result.get("ok"))
+        if execute and not result.get("ok"):
+            break
+    return {
+        "ok": ok,
+        "schema_version": LARK_KANBAN_SCHEMA_VERSION,
+        "record_count": len(records),
+        "created_record_ids": [item.get("record_id") for item in results],
+        "records": results,
     }
 
 
