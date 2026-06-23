@@ -1384,6 +1384,41 @@ def setup_lark_kanban_board(
 
     created_base = False
     created_table = False
+    config_payload: dict[str, Any] | None = None
+
+    def save_usable_config() -> None:
+        nonlocal config_payload
+        if not execute or not effective_base_token or not effective_table_id:
+            return
+        config_payload = save_lark_kanban_board_config(
+            config_path,
+            **{"base_" + "token": effective_base_token},
+            table_id=effective_table_id,
+            view_id=view_ids.get(DEFAULT_STATUS_QUEUE_VIEW) or DEFAULT_STATUS_QUEUE_VIEW,
+            base_url=base_url,
+            base_name=base_name,
+            table_name=table_name,
+            cli_bin=cli_bin,
+            identity=identity,
+            view_ids=view_ids,
+        )
+
+    def partial_enrichment_payload(command_result: dict[str, Any]) -> dict[str, Any]:
+        error = _command_error(command_result)
+        warnings.append(f"usable board config saved; view enrichment skipped: {error}")
+        return _setup_payload(
+            True,
+            execute,
+            config_path,
+            commands,
+            warnings,
+            effective_base_token,
+            effective_table_id,
+            config=config_payload,
+            partial=True,
+            enrichment_error=error,
+        )
+
     if not effective_base_token:
         created_base = True
         create = _run_command(
@@ -1497,6 +1532,8 @@ def setup_lark_kanban_board(
             else:
                 effective_table_id = "<table-id-from-table-create>"
 
+    save_usable_config()
+
     if execute:
         view_ids = _refresh_view_ids(
             cli_bin=cli_bin,
@@ -1506,6 +1543,7 @@ def setup_lark_kanban_board(
             commands=commands,
             runner=runner,
         )
+        save_usable_config()
     else:
         view_ids = {str(name): str(value) for name, value in view_ids.items()}
 
@@ -1534,6 +1572,8 @@ def setup_lark_kanban_board(
         )
         commands.append(view_create)
         if execute and not view_create.get("ok"):
+            if config_payload:
+                return partial_enrichment_payload(view_create)
             return _setup_payload(False, execute, config_path, commands, warnings, effective_base_token, effective_table_id)
         if execute:
             view_ids = _refresh_view_ids(
@@ -1544,6 +1584,7 @@ def setup_lark_kanban_board(
                 commands=commands,
                 runner=runner,
             )
+            save_usable_config()
 
     if not view_ids:
         view_ids = {view["name"]: view["name"] for view in lark_kanban_views()}
@@ -1557,22 +1598,11 @@ def setup_lark_kanban_board(
         result = _run_command(command, execute=execute, runner=runner)
         commands.append(result)
         if execute and not result.get("ok"):
+            if config_payload:
+                return partial_enrichment_payload(result)
             return _setup_payload(False, execute, config_path, commands, warnings, effective_base_token, effective_table_id)
 
-    config_payload: dict[str, Any] | None = None
-    if execute:
-        config_payload = save_lark_kanban_board_config(
-            config_path,
-            **{"base_" + "token": effective_base_token},
-            table_id=effective_table_id,
-            view_id=view_ids.get(DEFAULT_STATUS_QUEUE_VIEW) or DEFAULT_STATUS_QUEUE_VIEW,
-            base_url=base_url,
-            base_name=base_name,
-            table_name=table_name,
-            cli_bin=cli_bin,
-            identity=identity,
-            view_ids=view_ids,
-        )
+    save_usable_config()
     return {
         "ok": True,
         "schema_version": LARK_KANBAN_SCHEMA_VERSION,
@@ -1601,8 +1631,11 @@ def _setup_payload(
     table_id: str | None,
     *,
     error: str | None = None,
+    config: dict[str, Any] | None = None,
+    partial: bool = False,
+    enrichment_error: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "ok": ok,
         "schema_version": LARK_KANBAN_SCHEMA_VERSION,
         "execute": execute,
@@ -1611,8 +1644,20 @@ def _setup_payload(
         "table_id": table_id,
         "commands": commands,
         "warnings": warnings,
-        "error": error or next((_command_error(item) for item in commands if not item.get("ok")), "unknown"),
     }
+    if config:
+        payload["config"] = config
+        payload["next_commands"] = _next_lark_kanban_commands(config.get("board", {}))
+    if partial:
+        payload["partial"] = True
+        payload["enrichment_ok"] = False
+        payload["enrichment_error"] = enrichment_error or next(
+            (_command_error(item) for item in commands if not item.get("ok")),
+            "unknown",
+        )
+    elif not ok:
+        payload["error"] = error or next((_command_error(item) for item in commands if not item.get("ok")), "unknown")
+    return payload
 
 
 def _refresh_view_ids(

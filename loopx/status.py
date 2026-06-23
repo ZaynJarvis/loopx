@@ -7119,13 +7119,18 @@ def build_attention_queue(
         if not isinstance(goal, dict):
             continue
         active_state_fields: dict[str, Any] | None = None
-        item = goal_attention(goal)
-        if not item and goal.get("registry_member"):
-            current_status_run = latest_run(goal)
+        active_state_item: dict[str, Any] | None = None
+        current_status_run = latest_run(goal)
+        if goal.get("registry_member"):
             active_state_fields = active_state_todo_fields(goal)
-            item = active_state_todo_attention_item(goal, active_state_fields, current_status_run)
+            active_state_item = active_state_todo_attention_item(goal, active_state_fields, current_status_run)
+        if active_state_item and active_state_item.get("waiting_on") in {"controller", "user_or_controller"}:
+            item = active_state_item
+        else:
+            item = goal_attention(goal)
+            if not item:
+                item = active_state_item
         if item:
-            current_status_run = latest_run(goal)
             latest_run_action = public_safe_compact_text(
                 current_status_run.get("recommended_action")
                 if isinstance(current_status_run, dict)

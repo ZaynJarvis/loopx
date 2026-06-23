@@ -28,6 +28,7 @@ from loopx.lark_kanban import (  # noqa: E402
     lark_kanban_ux_task,
     read_lark_kanban_local_config,
     seed_lark_kanban_records,
+    setup_lark_kanban_board,
     sync_loopx_todos_to_lark_kanban,
     use_lark_kanban_board,
 )
@@ -97,6 +98,59 @@ def fake_runner(args: list[str], cwd: Path | None, timeout: float | None) -> dic
         "stderr": "",
         "timed_out": False,
     }
+
+
+def partial_setup_runner(args: list[str], cwd: Path | None, timeout: float | None) -> dict[str, object]:
+    if args == ["lark-cli", "--version"]:
+        return {"returncode": 0, "stdout": "lark-cli 1.0.56\n", "stderr": "", "timed_out": False}
+    if args == ["lark-cli", "auth", "status"]:
+        return {
+            "returncode": 0,
+            "stdout": json.dumps({"ok": True, "identities": {"user": {"available": True}}}),
+            "stderr": "",
+            "timed_out": False,
+        }
+    if args[-1:] == ["--help"]:
+        return {"returncode": 0, "stdout": "help\n", "stderr": "", "timed_out": False}
+    if "+base-create" in args:
+        return {
+            "returncode": 0,
+            "stdout": json.dumps(
+                {
+                    "ok": True,
+                    "data": {
+                        "base_token": "base_live_fixture",
+                        "table_id": "tbl_live_fixture",
+                    },
+                }
+            ),
+            "stderr": "",
+            "timed_out": False,
+        }
+    if "+view-list" in args:
+        return {
+            "returncode": 0,
+            "stdout": json.dumps(
+                {
+                    "ok": True,
+                    "data": [
+                        {"name": "Worker Queue", "view_id": "vew_worker_fixture"},
+                        {"name": "User Gates", "view_id": "vew_user_fixture"},
+                        {"name": "Kanban", "view_id": "vew_kanban_fixture"},
+                    ],
+                }
+            ),
+            "stderr": "",
+            "timed_out": False,
+        }
+    if "+view-set-visible-fields" in args:
+        return {
+            "returncode": 1,
+            "stdout": json.dumps({"ok": False, "error": {"message": "visible fields denied"}}),
+            "stderr": "",
+            "timed_out": False,
+        }
+    return {"returncode": 0, "stdout": json.dumps({"ok": True}), "stderr": "", "timed_out": False}
 
 
 def run_cli(*extra_args: str) -> dict[str, object]:
@@ -225,6 +279,27 @@ def main() -> int:
     assert case_cli["execute"] is False, case_cli
     assert case_cli["record_count"] == 5, case_cli
     assert case_cli["operator_card_fields"] == lark_kanban_operator_card_fields(), case_cli
+
+    with tempfile.TemporaryDirectory(prefix="loopx-lark-kanban-partial-") as tmp:
+        config_path = Path(tmp) / ".loopx" / "lark-kanban.json"
+        setup_payload = setup_lark_kanban_board(
+            config_path=config_path,
+            base_name="LoopX Partial Setup Fixture",
+            cli_bin="lark-cli",
+            identity="user",
+            execute=True,
+            runner=partial_setup_runner,
+        )
+        assert setup_payload["ok"] is True, setup_payload
+        assert setup_payload["partial"] is True, setup_payload
+        assert setup_payload["enrichment_ok"] is False, setup_payload
+        assert setup_payload["enrichment_error"] == "visible fields denied", setup_payload
+        stored = read_lark_kanban_local_config(config_path)
+        assert stored["exists"] is True, stored
+        assert stored["board"]["base_token"] == "base_live_fixture", stored
+        assert stored["board"]["table_id"] == "tbl_live_fixture", stored
+        assert stored["board"]["view_ids"]["Kanban"] == "vew_kanban_fixture", stored
+        assert setup_payload["config"]["board"]["table_id"] == "tbl_live_fixture", setup_payload
 
     with tempfile.TemporaryDirectory(prefix="loopx-lark-kanban-sync-") as tmp:
         root = Path(tmp)

@@ -65,7 +65,7 @@ def write_fixture(root: Path) -> tuple[Path, Path, Path, Path]:
                         "status": "active",
                         "repo": str(project),
                         "state_file": state_file,
-                        "adapter": {"kind": "lark-kanban", "status": "ready"},
+                        "adapter": {"kind": "lark-kanban", "status": "connected-read-only"},
                         "authority_sources": [],
                     }
                 ],
@@ -92,12 +92,12 @@ def main() -> None:
                 goal_id=GOAL_ID,
                 project=project,
                 state_file=None,
-                classification="openviking_review_gate_synced",
-                recommended_action="Review OpenViking PR #2792 before merge.",
+                classification="state_refreshed",
+                recommended_action="Run the next passive read-only adapter tick.",
                 dry_run=False,
                 sync_global=False,
             )
-            assert payload["classification"] == "openviking_review_gate_synced", payload
+            assert payload["classification"] == "state_refreshed", payload
 
             status = collect_status(
                 registry_path=registry_path,
@@ -117,6 +117,7 @@ def main() -> None:
             assert item["waiting_on"] == "controller", item
             assert item["recommended_action"] == PRIORITIZED_USER_TODO, item
             assert item["active_state_next_action"] == USER_TODO, item
+            assert item["latest_run_recommended_action"] == "Run the next passive read-only adapter tick.", item
             assert item["user_todos"]["open_count"] == 1, item
             assert item["user_todos"]["first_open_items"][0]["todo_id"] == "todo_review", item
             assert item["user_todos"]["first_open_items"][0]["text"] == PRIORITIZED_USER_TODO, item
