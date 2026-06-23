@@ -20,8 +20,12 @@ from loopx.lark_kanban import (  # noqa: E402
     STATUS_TODO,
     LarkKanbanConfig,
     build_create_board_plan,
+    lark_kanban_feasibility_cases,
     lark_kanban_heartbeat,
+    lark_kanban_operator_card_fields,
     lark_kanban_schema_payload,
+    lark_kanban_ux_task,
+    seed_lark_kanban_records,
 )
 
 
@@ -110,6 +114,15 @@ def main() -> int:
     for expected in ["Task", "Status", "Claim", "Handoff", "Evidence", "Run History", "Worker Command"]:
         assert expected in field_names, field_names
     assert schema["heartbeat_model"]["fallback"].startswith("agent heartbeat"), schema
+    assert schema["operator_view"]["kanban_card_fields"] == lark_kanban_operator_card_fields(), schema
+    assert lark_kanban_operator_card_fields() == [
+        "Task",
+        "Claim",
+        "Priority",
+        "User Gate",
+        "Evidence",
+        "Status",
+    ]
 
     plan = build_create_board_plan(
         base_name="LoopX Lark Kanban Control Plane POC",
@@ -145,6 +158,22 @@ def main() -> int:
     assert len(heartbeat["commands"]) == 2, heartbeat
     assert all(command["executed"] is False for command in heartbeat["commands"]), heartbeat
 
+    records = [lark_kanban_ux_task()] + lark_kanban_feasibility_cases()
+    assert len(records) == 5, records
+    assert records[0]["Status"] == "User Gate", records[0]
+    assert any("notes.zaynjarvis.com" in item["Task"] for item in records), records
+    seeded = seed_lark_kanban_records(
+        LarkKanbanConfig(
+            **{"base_" + "token": "base_public_fixture"},
+            table_id="tbl_public_fixture",
+        ),
+        records=records,
+        execute=False,
+    )
+    assert seeded["ok"] is True, seeded
+    assert seeded["record_count"] == 5, seeded
+    assert all(item["command"]["executed"] is False for item in seeded["records"]), seeded
+
     with tempfile.TemporaryDirectory(prefix="loopx-lark-kanban-smoke-") as tmp:
         fixture = Path(tmp) / "record-list.json"
         fixture.write_text(json.dumps(fixture_payload()), encoding="utf-8")
@@ -164,6 +193,19 @@ def main() -> int:
     assert cli["decision"] == "task_processed", cli
     assert cli["worker"]["executed"] is False, cli
     assert cli["final_status"] == "Claimed", cli
+
+    case_cli = run_cli(
+        "lark-kanban",
+        "seed-cases",
+        "--base-token",
+        "base_public_fixture",
+        "--table-id",
+        "tbl_public_fixture",
+    )
+    assert case_cli["ok"] is True, case_cli
+    assert case_cli["execute"] is False, case_cli
+    assert case_cli["record_count"] == 5, case_cli
+    assert case_cli["operator_card_fields"] == lark_kanban_operator_card_fields(), case_cli
 
     print("lark-kanban-control-plane-smoke: ok")
     return 0
