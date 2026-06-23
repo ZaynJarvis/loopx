@@ -46,6 +46,10 @@ runtime contract, benchmark route, or launch draft.
   the two-surface frontend rule for keeping public showcase/homepage work fancy
   and case-driven while the real ops control-plane route stays dense, calm,
   read-only, and reviewable.
+- [Department long-horizon Agent protocol](department-long-horizon-agent-protocol.md):
+  department-facing synthesis of LoopX's startup/process/ending state protocol,
+  priority interaction patterns, three-agent frontstage demo needs, rollback
+  model, and global manager command surface.
 - [Frontend kernel-to-mental-model map](frontend-kernel-mental-model-map.md):
   interaction contract for compressing kernel concepts such as goals, gates,
   todos, claims, scope, evidence, run history, quota, and handoff into five
