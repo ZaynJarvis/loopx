@@ -775,6 +775,8 @@ def build_record_list_command(config: LarkKanbanConfig) -> list[str]:
         config.base_token,
         "--table-id",
         config.table_id,
+        "--format",
+        "json",
         "--offset",
         "0",
         "--limit",
@@ -1391,6 +1393,7 @@ def setup_lark_kanban_board(
             if not create.get("ok"):
                 return _setup_payload(False, execute, config_path, commands, warnings, effective_base_token, effective_table_id)
             effective_base_token = _extract_base_token(create.get("json")) or ""
+            effective_table_id = _extract_table_id(create.get("json")) or effective_table_id
             if not effective_base_token:
                 return _setup_payload(
                     False,
@@ -1756,17 +1759,6 @@ def lark_kanban_doctor(
                 board_config.identity,
                 "--base-token",
                 board_config.base_token,
-            ],
-            [
-                board_config.cli_bin,
-                "base",
-                "+base-block-list",
-                "--as",
-                board_config.identity,
-                "--base-token",
-                board_config.base_token,
-                "--type",
-                "table",
             ],
             [
                 board_config.cli_bin,
