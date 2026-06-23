@@ -162,7 +162,8 @@ def lark_kanban_schema_payload(*, table_name: str = DEFAULT_TABLE_NAME) -> dict[
         "ok": True,
         "schema_version": LARK_KANBAN_SCHEMA_VERSION,
         "table_name": table_name,
-        "source_of_truth": "lark_base_bitable",
+        "source_of_truth": "loopx_todos_projected_to_lark_base",
+        "adapter_role": "status_tracker_claim_surface",
         "loopx_mapping": {
             "todo": "Task row with Status=Todo and Claim=Unclaimed",
             "claim": "Claim single-selection plus Claimed By text",
@@ -193,6 +194,20 @@ def lark_kanban_schema_payload(*, table_name: str = DEFAULT_TABLE_NAME) -> dict[
                 "a reachable callback or daemon bridge in the current environment."
             ),
             "fallback": "agent heartbeat polls Worker Queue, soft-claims one task, runs worker command, writes evidence",
+        },
+        "task_spawning_model": {
+            "board_creates_tasks": False,
+            "rule": (
+                "Long-running Codex sessions may claim visible Kanban rows, but "
+                "new, split, successor, or superseding work must be written through "
+                "LoopX todo lifecycle/intake commands and then synced back to Lark."
+            ),
+            "commands": [
+                "loopx todo add",
+                "loopx todo complete --next-agent-todo",
+                "loopx todo supersede --next-agent-todo",
+                "complex_request_intake_v0",
+            ],
         },
     }
 
@@ -2018,7 +2033,7 @@ def _lark_record_from_todo_block(
         "Evidence": evidence,
         "Run History": f"synced from LoopX todo status={status or 'open'}",
         "Worker Command": "",
-        "Workdir": str(state_file.parent),
+        "Workdir": "",
         "Last Error": "",
         "Last Result Code": None,
     }

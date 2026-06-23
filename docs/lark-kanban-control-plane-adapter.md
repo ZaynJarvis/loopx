@@ -7,6 +7,14 @@ Kanban board. It is intentionally a thin projection over the same LoopX ideas:
 todos, claims, user gates, handoff, evidence, and run history. It does not
 replace the executor runtime, quota guard, or future daemon lease model.
 
+The board is a status tracker and claim surface, not the task-planning engine.
+It carries critical coordination facts so a long-running Codex session can see
+available work, claim one row, resume its own row, and write back evidence. New
+work still belongs to the LoopX todo lifecycle: split, successor, superseding,
+and newly discovered tasks should be created with `loopx todo add`,
+`loopx todo complete --next-*`, `loopx todo supersede`, or a typed planning
+intake, then projected back to Lark with `sync-loopx-todos`.
+
 ## Mapping
 
 | LoopX concept | Lark Base field |
@@ -98,6 +106,22 @@ python3 -m loopx.cli lark-kanban heartbeat \
   --allow-command-prefix "python3"
 ```
 
+## Task Spawning Model
+
+Kanban claim loops should not invent new rows by directly editing the Base.
+When a worker discovers follow-up work, it should classify the need first:
+
+- same-slice continuation: keep evidence in the current row until review;
+- real successor: complete the current LoopX todo with `--next-agent-todo` or
+  `--next-user-todo`;
+- replacement or narrower split: use `todo supersede --next-agent-todo`;
+- strategy-heavy fan-out: run `complex_request_intake_v0` to create a small
+  typed todo batch.
+
+After that writeback, `sync-loopx-todos` updates the status tracker. This keeps
+task identity, `todo_id`, gates, claims, and successor metadata in LoopX while
+letting Kanban remain the operator-visible tracker for current work.
+
 ## Setup And Reuse
 
 The recommended path is `setup`, using user identity by default. It preflights
@@ -126,7 +150,10 @@ python3 -m loopx.cli lark-kanban heartbeat --execute-lark
 `sync-loopx-todos` reads the goal active state from the LoopX registry and
 upserts open user/agent todos into the board. User todos become `User Gate`
 cards; claimed agent todos become `Claimed`; blocked/done todos map to
-`Blocked`/`Done` when included.
+`Blocked`/`Done` when included. Synced LoopX todos intentionally leave
+`Worker Command` and `Workdir` empty unless a task row was explicitly authored
+as a worker-launch row; the shared board must not receive raw local checkout or
+active-state paths.
 
 ## CLI Surface
 
@@ -161,8 +188,10 @@ execution has its own gate, `--execute-worker`, and an allowlist gate,
 The prototype deliberately keeps raw agent transcripts, credentials, local
 private paths, and hidden benchmark material out of Lark rows. `Evidence` and
 `Run History` should contain compact public-safe summaries or artifact
-pointers. If a real worker needs to store detailed logs, store them in the
-worker's normal trace surface and write only a compact pointer back to Base.
+pointers. `sync-loopx-todos` must not populate `Workdir` from the local active
+state path. If a real worker needs to store detailed logs or local launch
+context, store them in the worker's normal trace surface and write only a
+compact pointer back to Base.
 
 ## Validation
 

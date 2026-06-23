@@ -114,6 +114,10 @@ def main() -> int:
     schema = lark_kanban_schema_payload()
     assert schema["ok"] is True, schema
     assert schema["schema_version"] == "loopx_lark_kanban_control_plane_v0", schema
+    assert schema["source_of_truth"] == "loopx_todos_projected_to_lark_base", schema
+    assert schema["adapter_role"] == "status_tracker_claim_surface", schema
+    assert schema["task_spawning_model"]["board_creates_tasks"] is False, schema
+    assert "LoopX todo lifecycle" in schema["task_spawning_model"]["rule"], schema
     field_names = [field["name"] for field in schema["fields"]]
     for expected in ["Task", "Status", "Claim", "Handoff", "Evidence", "Run History", "Worker Command"]:
         assert expected in field_names, field_names
@@ -275,6 +279,8 @@ def main() -> int:
         assert sync_payload["ok"] is True, sync_payload
         assert sync_payload["todo_count"] == 2, sync_payload
         assert any(item["values"]["Status"] == "User Gate" for item in sync_payload["records"]), sync_payload
+        assert all(item["values"]["Workdir"] == "" for item in sync_payload["records"]), sync_payload
+        assert str(root) not in json.dumps(sync_payload["records"], ensure_ascii=False), sync_payload
         assert all(item["command"]["executed"] is False for item in sync_payload["records"]), sync_payload
 
     print("lark-kanban-control-plane-smoke: ok")
