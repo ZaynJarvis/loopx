@@ -73,6 +73,7 @@ incident report, or launch draft.
 ### Product Direction
 
 - [Product vision](product/vision.md)
+- [Department long-horizon Agent protocol](product/department-long-horizon-agent-protocol.md)
 - [Codex CLI TUI-first loop](product/codex-cli-tui-loop.md)
 - [Reward-style replanning hints](product/reward-style-replanning.md)
 - [Frontstage channel and lease roadmap](frontstage-channel-lease-roadmap.md)
