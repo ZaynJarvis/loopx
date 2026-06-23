@@ -10,7 +10,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_PATH = REPO_ROOT / "examples/fixtures/department-self-iteration-rollout.public.json"
-LIVE_FIXTURE_PATH = REPO_ROOT / "examples/fixtures/department-live-generated-rollout-seed.public.json"
+LIVE_FIXTURE_GLOB = "department-live-generated-rollout-seed*.public.json"
 
 PRIVATE_PATTERNS = [
     re.compile(r"/Users/[A-Za-z0-9._-]+/"),
@@ -127,54 +127,65 @@ def main() -> int:
     assert "one human gate node" in must_render, must_render
     assert "one dashed inferred bridge" in must_render, must_render
 
-    live_fixture_text = LIVE_FIXTURE_PATH.read_text(encoding="utf-8")
-    assert_public_safe(live_fixture_text)
-    live_payload = json.loads(live_fixture_text)
-    assert live_payload["schema_version"] == "department_live_generated_fixture_seed_v0", live_payload
-    assert live_payload["goal_id"] == "loopx-meta", live_payload
-    for key in REQUIRED_BOUNDARY_FALSE:
-        assert live_payload["public_boundary"].get(key) is False, (key, live_payload["public_boundary"])
-    assert live_payload["public_boundary"].get("private_material_body_recorded") is False, live_payload
-    assert live_payload["capture_contract"]["source"] == "live_loopx_cli_capture", live_payload
-    assert live_payload["capture_contract"]["raw_payloads_committed"] is False, live_payload
+    live_fixture_paths = sorted((REPO_ROOT / "examples/fixtures").glob(LIVE_FIXTURE_GLOB))
+    assert len(live_fixture_paths) >= 2, live_fixture_paths
+    live_run_counts: list[tuple[str, int]] = []
+    for live_fixture_path in live_fixture_paths:
+        live_fixture_text = live_fixture_path.read_text(encoding="utf-8")
+        assert_public_safe(live_fixture_text)
+        live_payload = json.loads(live_fixture_text)
+        assert live_payload["schema_version"] == "department_live_generated_fixture_seed_v0", live_payload
+        assert live_payload["goal_id"] == "loopx-meta", live_payload
+        for key in REQUIRED_BOUNDARY_FALSE:
+            assert live_payload["public_boundary"].get(key) is False, (
+                key,
+                live_payload["public_boundary"],
+            )
+        assert live_payload["public_boundary"].get("private_material_body_recorded") is False, live_payload
+        assert live_payload["capture_contract"]["source"] == "live_loopx_cli_capture", live_payload
+        assert live_payload["capture_contract"]["raw_payloads_committed"] is False, live_payload
 
-    commands = live_payload["capture_contract"]["commands"]
-    command_ids = {command["command_id"] for command in commands}
-    assert {
-        "quota_should_run_product_capability",
-        "global_status",
-        "history_recent",
-    } <= command_ids, command_ids
-    assert all(command["payload_bytes_observed"] > 1000 for command in commands), commands
+        commands = live_payload["capture_contract"]["commands"]
+        command_ids = {command["command_id"] for command in commands}
+        assert {
+            "quota_should_run_product_capability",
+            "global_status",
+            "history_recent",
+        } <= command_ids, command_ids
+        assert all(command["payload_bytes_observed"] > 1000 for command in commands), commands
 
-    quota = live_payload["observed_control_plane"]["quota_should_run"]
-    assert quota["decision"] == "run", quota
-    assert quota["interaction_contract"]["schema_version"] == "loopx_interaction_contract_v0", quota
-    assert quota["interaction_contract"]["user_channel"]["action_required"] is False, quota
-    assert quota["interaction_contract"]["agent_channel"]["must_attempt"] is True, quota
-    assert quota["interaction_contract"]["cli_channel"]["spend_after_validation"] is True, quota
-    assert quota["capability_gate"]["runnable_count"] >= 1, quota
-    assert quota["agent_todo_summary"]["open_count"] >= len(
-        quota["agent_todo_summary"]["first_executable_items"]
-    ), quota
+        quota = live_payload["observed_control_plane"]["quota_should_run"]
+        assert quota["decision"] == "run", quota
+        assert quota["interaction_contract"]["schema_version"] == "loopx_interaction_contract_v0", quota
+        assert quota["interaction_contract"]["user_channel"]["action_required"] is False, quota
+        assert quota["interaction_contract"]["agent_channel"]["must_attempt"] is True, quota
+        assert quota["interaction_contract"]["cli_channel"]["spend_after_validation"] is True, quota
+        assert quota["capability_gate"]["runnable_count"] >= 1, quota
+        assert quota["agent_todo_summary"]["open_count"] >= len(
+            quota["agent_todo_summary"]["first_executable_items"]
+        ), quota
 
-    status = live_payload["observed_control_plane"]["status"]
-    assert status["goal_count"] >= 1, status
-    assert status["run_count"] >= status["usage_summary"]["runs_24h"], status
-    assert status["todo_index"]["schema_version"] == "todo_index_v0", status
-    assert status["event_ledger_summary"]["source"] == "run_history", status
+        status = live_payload["observed_control_plane"]["status"]
+        assert status["goal_count"] >= 1, status
+        assert status["run_count"] >= status["usage_summary"]["runs_24h"], status
+        assert status["todo_index"]["schema_version"] == "todo_index_v0", status
+        assert status["event_ledger_summary"]["source"] == "run_history", status
+        live_run_counts.append((live_payload["generated_at"], status["run_count"]))
 
-    warnings = {warning["warning_kind"] for warning in live_payload["observed_warnings"]}
-    assert "stale_latest_run_projection" in warnings, warnings
-    assert "completed_agent_todo_archive_required" in warnings, warnings
-    assert "promotion_readiness_stale" in warnings, warnings
+        warnings = {warning["warning_kind"] for warning in live_payload["observed_warnings"]}
+        assert "stale_latest_run_projection" in warnings, warnings
+        assert "completed_agent_todo_archive_required" in warnings, warnings
+        assert "promotion_readiness_stale" in warnings, warnings
 
-    noise_cases = {case["case_id"] for case in live_payload["frontend_noise_cases"]}
-    assert "large_status_payload" in noise_cases, noise_cases
-    assert "warnings_are_first_class" in noise_cases, noise_cases
-    assert live_payload["fixture_pairing"]["curated_story_fixture"] == (
-        "examples/fixtures/department-self-iteration-rollout.public.json"
-    ), live_payload
+        noise_cases = {case["case_id"] for case in live_payload["frontend_noise_cases"]}
+        assert "large_status_payload" in noise_cases, noise_cases
+        assert "warnings_are_first_class" in noise_cases, noise_cases
+        assert live_payload["fixture_pairing"]["curated_story_fixture"] == (
+            "examples/fixtures/department-self-iteration-rollout.public.json"
+        ), live_payload
+
+    ordered_live_run_counts = [run_count for _, run_count in sorted(live_run_counts)]
+    assert ordered_live_run_counts == sorted(ordered_live_run_counts), live_run_counts
 
     print("department-self-iteration-rollout-fixtures-smoke ok")
     return 0

@@ -65,7 +65,7 @@ LoopX 的状态必须分两层讲清楚，否则部门汇报会混淆“事实�
 | `frontstage dashboard` | [`apps/dashboard/src/views/frontstage-page.tsx`](../../apps/dashboard/src/views/frontstage-page.tsx) | 已有基础 | 已能展示 ops mode、goal_channel_projection、demo fixture fallback。 |
 | `rollout_event_summary_v0` | [`loopx/rollout_event_log.py`](../../loopx/rollout_event_log.py) | 已实现 | 可汇总 event kind、agent、todo、classification，但还未充分进入前端故事线。 |
 | `department_animation_fixture_v0` | 本文档第 6 节 | 已有最小输入，需继续迭代 | 面向部门汇报和前端动画的 public-safe curated/inferred fixture。 |
-| `department_live_generated_fixture_seed_v0` | [`examples/fixtures/department-live-generated-rollout-seed.public.json`](../../examples/fixtures/department-live-generated-rollout-seed.public.json) | 新增 seed | 从真实 `quota should-run`、`status`、`history` 跑出的 public-safe 摘要，专门测试真实噪声和 warning。 |
+| `department_live_generated_fixture_seed_v0` | [`examples/fixtures/department-live-generated-rollout-seed.public.json`](../../examples/fixtures/department-live-generated-rollout-seed.public.json) 及同名前缀 seed | 已有 2 个 live seed | 从真实 `quota should-run`、`status`、`history` 跑出的 public-safe 摘要，专门测试真实噪声、warning 和跨 heartbeat cycle 的计数漂移。 |
 
 ### 2.3 已对齐的实现
 
@@ -250,7 +250,7 @@ LoopX 的状态必须分两层讲清楚，否则部门汇报会混淆“事实�
 验收不应是“有一个好看的 JSON”就结束。`P0-prep-2` 必须同时交付：
 
 - 一个 curated/inferred story fixture；
-- 一个 live-generated seed fixture；
+- 至少两个 live-generated seed fixture，后续扩到 3-5 个；
 - 一个 smoke 同时验证两者；
 - 文档明确哪些字段是 observed，哪些是 inferred，哪些只是 frontend noise case。
 
@@ -306,7 +306,7 @@ LoopX 的状态必须分两层讲清楚，否则部门汇报会混淆“事实�
 当前最小开发测试输入分两类：
 
 - Curated story：[`examples/fixtures/department-self-iteration-rollout.public.json`](../../examples/fixtures/department-self-iteration-rollout.public.json)
-- Live-generated seed：[`examples/fixtures/department-live-generated-rollout-seed.public.json`](../../examples/fixtures/department-live-generated-rollout-seed.public.json)
+- Live-generated seed：[`examples/fixtures/department-live-generated-rollout-seed.public.json`](../../examples/fixtures/department-live-generated-rollout-seed.public.json) 和后续同名前缀 seed，例如 `department-live-generated-rollout-seed-20260623T1451Z.public.json`
 
 配套 smoke 是 [`examples/department-self-iteration-rollout-fixture-smoke.py`](../../examples/department-self-iteration-rollout-fixture-smoke.py)。这些不是源事实 event ledger，只是 public-safe fixture；它们的任务是让旁路前端先能开发和验证三 lane timeline，同时不被真实控制面的 warning、缺字段和大 payload 打爆。
 
