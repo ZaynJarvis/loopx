@@ -258,6 +258,7 @@ def main(argv: list[str] | None = None) -> int:
 
     lark_kanban_result = handle_lark_kanban_command(
         args,
+        registry_path=registry_path,
         print_payload=print_payload,
         output_format=output_format,
     )

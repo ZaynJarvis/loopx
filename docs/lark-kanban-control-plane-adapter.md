@@ -41,9 +41,8 @@ All other fields remain in the record detail and `All Tasks` grid. This keeps
 the first page light enough to scan while preserving complete task context for
 agents, handoff, audit, and recovery.
 
-The current `lark-cli base +view-set-card` shortcut only controls Kanban cover
-configuration, not the card field visibility list. Until that shortcut exists,
-configure the visible card fields in the Lark UI card settings panel and verify
+`lark-cli` 1.0.56 exposes `base +view-set-visible-fields`, so
+`lark-kanban setup` writes this compact Kanban card field list directly. Verify
 with:
 
 ```bash
@@ -99,10 +98,45 @@ python3 -m loopx.cli lark-kanban heartbeat \
   --allow-command-prefix "python3"
 ```
 
+## Setup And Reuse
+
+The recommended path is `setup`, using user identity by default. It preflights
+`lark-cli`, auth, and the required Base shortcuts, then either reuses the local
+`.loopx/lark-kanban.json` board config or creates a new Base/table:
+
+```bash
+python3 -m loopx.cli lark-kanban doctor
+lark-cli auth login --domain base --recommend
+python3 -m loopx.cli lark-kanban setup --base-name "LoopX Kanban POC" --execute
+python3 -m loopx.cli lark-kanban sync-loopx-todos --goal-id <goal-id> --execute
+```
+
+The local config stores the reusable Base token, table id, view ids, identity,
+and synced `goal_id:todo_id -> record_id` mappings. The file lives under
+`.loopx/`, which is gitignored.
+
+To use someone else's shared board, store its URL or IDs:
+
+```bash
+python3 -m loopx.cli lark-kanban use --base-url "<shared-base-url>"
+python3 -m loopx.cli lark-kanban config
+python3 -m loopx.cli lark-kanban heartbeat --execute-lark
+```
+
+`sync-loopx-todos` reads the goal active state from the LoopX registry and
+upserts open user/agent todos into the board. User todos become `User Gate`
+cards; claimed agent todos become `Claimed`; blocked/done todos map to
+`Blocked`/`Done` when included.
+
 ## CLI Surface
 
 ```bash
 python3 -m loopx.cli lark-kanban schema --format json
+python3 -m loopx.cli lark-kanban doctor
+python3 -m loopx.cli lark-kanban setup --base-name "LoopX Kanban POC" --execute
+python3 -m loopx.cli lark-kanban use --base-url "<shared-base-url>"
+python3 -m loopx.cli lark-kanban config
+python3 -m loopx.cli lark-kanban sync-loopx-todos --goal-id <goal-id> --execute
 python3 -m loopx.cli lark-kanban plan-create --base-name "LoopX Kanban POC"
 python3 -m loopx.cli lark-kanban create-board --base-name "LoopX Kanban POC" --execute
 python3 -m loopx.cli lark-kanban seed-task --base-token <base> --table-id <table> --execute
@@ -110,9 +144,10 @@ python3 -m loopx.cli lark-kanban seed-cases --base-token <base> --table-id <tabl
 python3 -m loopx.cli lark-kanban heartbeat --base-token <base> --table-id <table> --execute-lark
 ```
 
-`create-board`, `seed-task`, and `heartbeat` are dry-run unless their explicit
-execute flags are set. Worker execution has its own gate,
-`--execute-worker`, and an allowlist gate, `--allow-command-prefix`.
+`setup`, `create-board`, `seed-task`, `seed-cases`, `sync-loopx-todos`, and
+`heartbeat` are dry-run unless their explicit execute flags are set. Worker
+execution has its own gate, `--execute-worker`, and an allowlist gate,
+`--allow-command-prefix`.
 
 `seed-cases` creates one UX optimization task plus four feasibility cases:
 

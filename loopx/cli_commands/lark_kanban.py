@@ -13,15 +13,22 @@ from ..lark_kanban import (
     LarkKanbanConfig,
     build_create_board_plan,
     create_lark_kanban_board,
+    default_lark_kanban_config_path,
+    lark_kanban_doctor,
     lark_kanban_feasibility_cases,
     lark_kanban_heartbeat,
     lark_kanban_operator_card_fields,
     lark_kanban_schema_payload,
+    lark_kanban_config_from_payload,
     lark_kanban_ux_task,
+    read_lark_kanban_local_config,
     render_lark_kanban_markdown,
     sample_lark_kanban_task,
     seed_lark_kanban_records,
     seed_lark_kanban_task,
+    setup_lark_kanban_board,
+    sync_loopx_todos_to_lark_kanban,
+    use_lark_kanban_board,
 )
 
 
@@ -46,6 +53,40 @@ def register_lark_kanban_commands(
     add_subcommand_format(schema)
     schema.add_argument("--table-name", default=DEFAULT_TABLE_NAME)
 
+    config = sub.add_parser("config", help="Print the local Lark Kanban board config.")
+    add_subcommand_format(config)
+    _add_local_config_args(config)
+
+    use = sub.add_parser("use", help="Store an existing shared Lark Base board for this project.")
+    add_subcommand_format(use)
+    _add_local_config_args(use)
+    use.add_argument("--base-url", help="Shared Lark Base URL. table/view query params are reused when present.")
+    use.add_argument("--base-token", help="Base token when --base-url is not used.")
+    use.add_argument("--table-id", help="Table id when --base-url does not include table=.")
+    use.add_argument("--view-id")
+    use.add_argument("--cli-bin", default=DEFAULT_CLI_BIN)
+    use.add_argument("--as", dest="identity", default="user", choices=["bot", "user", "auto"])
+
+    setup = sub.add_parser("setup", help="Create or reuse the project Lark Kanban board. Dry-run unless --execute.")
+    add_subcommand_format(setup)
+    _add_local_config_args(setup)
+    setup.add_argument("--base-name", default="LoopX Kanban POC")
+    setup.add_argument("--table-name", default=DEFAULT_TABLE_NAME)
+    setup.add_argument("--base-url", help="Reuse an existing shared Base URL.")
+    setup.add_argument("--base-token", help="Reuse an existing Base token instead of creating a new Base.")
+    setup.add_argument("--table-id", help="Reuse an existing table id instead of creating/configuring a table.")
+    setup.add_argument("--cli-bin", default=DEFAULT_CLI_BIN)
+    setup.add_argument("--as", dest="identity", default="user", choices=["bot", "user", "auto"])
+    setup.add_argument("--execute", action="store_true", help="Actually run lark-cli write commands and save config.")
+
+    doctor = sub.add_parser("doctor", help="Diagnose lark-cli, auth, local config, and board reachability.")
+    add_subcommand_format(doctor)
+    _add_local_config_args(doctor)
+    doctor.add_argument("--cli-bin", default=DEFAULT_CLI_BIN)
+    doctor.add_argument("--as", dest="identity", default="user", choices=["bot", "user", "auto"])
+    doctor.add_argument("--no-board-check", action="store_true", help="Skip remote Base read checks.")
+    doctor.add_argument("--require-board", action="store_true", help="Fail if no local board config exists.")
+
     plan = sub.add_parser("plan-create", help="Print lark-cli commands for creating the board.")
     add_subcommand_format(plan)
     _add_create_args(plan)
@@ -57,6 +98,7 @@ def register_lark_kanban_commands(
 
     seed = sub.add_parser("seed-task", help="Create one sample task row. Dry-run unless --execute.")
     add_subcommand_format(seed)
+    _add_local_config_args(seed)
     _add_lark_target_args(seed)
     seed.add_argument("--goal-id", default="loopx-lark-kanban-poc")
     seed.add_argument("--worker-command", default="")
@@ -68,17 +110,33 @@ def register_lark_kanban_commands(
         help="Seed the UX optimization task plus feasibility cases. Dry-run unless --execute.",
     )
     add_subcommand_format(cases)
+    _add_local_config_args(cases)
     _add_lark_target_args(cases)
     cases.add_argument("--goal-id", default="loopx-lark-kanban-ux")
     cases.add_argument("--worker-command", default="")
     cases.add_argument("--workdir", default="")
     cases.add_argument("--execute", action="store_true", help="Actually upsert the records.")
 
+    sync = sub.add_parser(
+        "sync-loopx-todos",
+        help="Sync a goal's active LoopX todos into the configured board. Dry-run unless --execute.",
+    )
+    add_subcommand_format(sync)
+    _add_local_config_args(sync)
+    _add_lark_target_args(sync)
+    sync.add_argument("--goal-id", required=True)
+    sync.add_argument("--project")
+    sync.add_argument("--state-file")
+    sync.add_argument("--include-done", action="store_true")
+    sync.add_argument("--limit", type=int, default=50)
+    sync.add_argument("--execute", action="store_true", help="Actually upsert records and remember record ids.")
+
     heartbeat = sub.add_parser(
         "heartbeat",
         help="Poll one Kanban task, claim it, optionally run a worker command, and write evidence.",
     )
     add_subcommand_format(heartbeat)
+    _add_local_config_args(heartbeat)
     _add_lark_target_args(heartbeat)
     heartbeat.add_argument("--agent-id", default=DEFAULT_AGENT_ID)
     heartbeat.add_argument(
@@ -118,45 +176,102 @@ def register_lark_kanban_commands(
     )
 
 
+def _add_local_config_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--config-path", help="Local board config path. Defaults beside the LoopX registry.")
+
+
 def _add_create_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--base-name", default="LoopX Lark Kanban Control Plane POC")
     parser.add_argument("--table-name", default=DEFAULT_TABLE_NAME)
     parser.add_argument("--base-token", help="Use an existing Base token instead of creating a new Base.")
     parser.add_argument("--user-open-id", help="Grant this user full_access to a newly created/existing Base.")
     parser.add_argument("--cli-bin", default=DEFAULT_CLI_BIN)
-    parser.add_argument("--as", dest="identity", default="bot", choices=["bot", "user", "auto"])
+    parser.add_argument("--as", dest="identity", default="user", choices=["bot", "user", "auto"])
 
 
 def _add_lark_target_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--base-token", required=True)
-    parser.add_argument("--table-id", required=True)
-    parser.add_argument("--view-id", default=DEFAULT_STATUS_QUEUE_VIEW)
+    parser.add_argument("--base-token")
+    parser.add_argument("--table-id")
+    parser.add_argument("--view-id")
     parser.add_argument("--cli-bin", default=DEFAULT_CLI_BIN)
-    parser.add_argument("--as", dest="identity", default="bot", choices=["bot", "user", "auto"])
+    parser.add_argument("--as", dest="identity", default="user", choices=["bot", "user", "auto"])
 
 
-def _target_config(args: argparse.Namespace) -> LarkKanbanConfig:
+def _target_config(args: argparse.Namespace, *, config_path: Path) -> LarkKanbanConfig:
+    stored = lark_kanban_config_from_payload(read_lark_kanban_local_config(config_path))
+    base_token = args.base_token or (stored.base_token if stored else None)
+    table_id = args.table_id or (stored.table_id if stored else None)
+    view_id = args.view_id or (stored.view_id if stored else DEFAULT_STATUS_QUEUE_VIEW)
+    cli_bin = args.cli_bin or (stored.cli_bin if stored else DEFAULT_CLI_BIN)
+    identity = args.identity or (stored.identity if stored else "user")
+    if not base_token or not table_id:
+        raise ValueError("lark-kanban target requires --base-token/--table-id or local config from setup/use")
     return LarkKanbanConfig(
-        **{"base_" + "token": args.base_token},
-        table_id=args.table_id,
-        view_id=args.view_id,
-        cli_bin=args.cli_bin,
-        identity=args.identity,
+        **{"base_" + "token": base_token},
+        table_id=table_id,
+        view_id=view_id,
+        cli_bin=cli_bin,
+        identity=identity,
     )
 
 
 def handle_lark_kanban_command(
     args: argparse.Namespace,
     *,
+    registry_path: Path,
     print_payload: PrintPayload,
     output_format: OutputFormat,
 ) -> int | None:
     if args.command != "lark-kanban":
         return None
     fmt = output_format(args)
+    config_path = (
+        Path(args.config_path).expanduser()
+        if getattr(args, "config_path", None)
+        else default_lark_kanban_config_path(registry_path)
+    )
     try:
         if args.lark_kanban_command == "schema":
             payload = lark_kanban_schema_payload(table_name=args.table_name)
+        elif args.lark_kanban_command == "config":
+            payload = read_lark_kanban_local_config(config_path)
+            payload["next_commands"] = []
+            if isinstance(payload.get("board"), dict):
+                payload["next_commands"] = [
+                    "loopx lark-kanban doctor",
+                    "loopx lark-kanban sync-loopx-todos --goal-id <goal-id> --execute",
+                    "loopx lark-kanban heartbeat --execute-lark",
+                ]
+        elif args.lark_kanban_command == "use":
+            payload = use_lark_kanban_board(
+                config_path=config_path,
+                base_url=args.base_url,
+                **{"base_" + "token": args.base_token},
+                table_id=args.table_id,
+                view_id=args.view_id,
+                cli_bin=args.cli_bin,
+                identity=args.identity,
+            )
+        elif args.lark_kanban_command == "setup":
+            payload = setup_lark_kanban_board(
+                config_path=config_path,
+                base_name=args.base_name,
+                table_name=args.table_name,
+                base_url=args.base_url,
+                **{"base_" + "token": args.base_token},
+                table_id=args.table_id,
+                cli_bin=args.cli_bin,
+                identity=args.identity,
+                execute=bool(args.execute),
+            )
+        elif args.lark_kanban_command == "doctor":
+            payload = lark_kanban_doctor(
+                config_path=config_path,
+                cli_bin=args.cli_bin,
+                identity=args.identity,
+                check_board=not bool(args.no_board_check),
+                require_board=bool(args.require_board),
+            )
         elif args.lark_kanban_command == "plan-create":
             commands = build_create_board_plan(
                 base_name=args.base_name,
@@ -197,7 +312,7 @@ def handle_lark_kanban_command(
                 workdir=args.workdir,
             )
             payload = seed_lark_kanban_task(
-                _target_config(args),
+                _target_config(args, config_path=config_path),
                 task=task,
                 execute=bool(args.execute),
             )
@@ -213,16 +328,28 @@ def handle_lark_kanban_command(
                 workdir=args.workdir,
             )
             payload = seed_lark_kanban_records(
-                _target_config(args),
+                _target_config(args, config_path=config_path),
                 records=records,
                 execute=bool(args.execute),
             )
             payload["execute"] = bool(args.execute)
             payload["operator_card_fields"] = lark_kanban_operator_card_fields()
+        elif args.lark_kanban_command == "sync-loopx-todos":
+            payload = sync_loopx_todos_to_lark_kanban(
+                _target_config(args, config_path=config_path),
+                registry_path=registry_path,
+                goal_id=args.goal_id,
+                config_path=config_path,
+                project=Path(args.project).expanduser() if args.project else None,
+                state_file=Path(args.state_file).expanduser() if args.state_file else None,
+                include_done=bool(args.include_done),
+                limit=args.limit,
+                execute=bool(args.execute),
+            )
         elif args.lark_kanban_command == "heartbeat":
             fixture = _load_fixture(args.fixture) if args.fixture else None
             payload = lark_kanban_heartbeat(
-                _target_config(args),
+                _target_config(args, config_path=config_path),
                 agent_id=args.agent_id,
                 fixture=fixture,
                 worker_command=args.worker_command,

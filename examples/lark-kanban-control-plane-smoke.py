@@ -20,12 +20,16 @@ from loopx.lark_kanban import (  # noqa: E402
     STATUS_TODO,
     LarkKanbanConfig,
     build_create_board_plan,
+    default_lark_kanban_config_path,
     lark_kanban_feasibility_cases,
     lark_kanban_heartbeat,
     lark_kanban_operator_card_fields,
     lark_kanban_schema_payload,
     lark_kanban_ux_task,
+    read_lark_kanban_local_config,
     seed_lark_kanban_records,
+    sync_loopx_todos_to_lark_kanban,
+    use_lark_kanban_board,
 )
 
 
@@ -134,6 +138,8 @@ def main() -> int:
     assert any("+table-create" in command for command in joined), joined
     assert any("permission.members" in command for command in joined), joined
     assert any("+view-set-group" in command and "Kanban" in command for command in joined), joined
+    assert any("group_config" in command for command in joined), joined
+    assert any("+view-set-visible-fields" in command for command in joined), joined
 
     heartbeat = lark_kanban_heartbeat(
         LarkKanbanConfig(
@@ -177,13 +183,22 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="loopx-lark-kanban-smoke-") as tmp:
         fixture = Path(tmp) / "record-list.json"
         fixture.write_text(json.dumps(fixture_payload()), encoding="utf-8")
+        config_path = Path(tmp) / ".loopx" / "lark-kanban.json"
+        use_payload = use_lark_kanban_board(
+            config_path=config_path,
+            base_url="https://example.invalid/base/base_public_fixture?table=tbl_public_fixture&view=vew_public_fixture",
+            cli_bin="lark-cli",
+            identity="user",
+        )
+        assert use_payload["ok"] is True, use_payload
+        stored = read_lark_kanban_local_config(config_path)
+        assert stored["board"]["base_token"] == "base_public_fixture", stored
+        assert stored["board"]["table_id"] == "tbl_public_fixture", stored
         cli = run_cli(
             "lark-kanban",
             "heartbeat",
-            "--base-token",
-            "base_public_fixture",
-            "--table-id",
-            "tbl_public_fixture",
+            "--config-path",
+            str(config_path),
             "--fixture",
             str(fixture),
             "--agent-id",
@@ -206,6 +221,61 @@ def main() -> int:
     assert case_cli["execute"] is False, case_cli
     assert case_cli["record_count"] == 5, case_cli
     assert case_cli["operator_card_fields"] == lark_kanban_operator_card_fields(), case_cli
+
+    with tempfile.TemporaryDirectory(prefix="loopx-lark-kanban-sync-") as tmp:
+        root = Path(tmp)
+        registry = root / ".loopx" / "registry.json"
+        registry.parent.mkdir(parents=True)
+        state = root / "active-state.md"
+        state.write_text(
+            "\n".join(
+                [
+                    "---",
+                    "updated_at: 2026-06-23T00:00:00+00:00",
+                    "---",
+                    "",
+                    "## User Todo / Owner Review Reading Queue",
+                    "",
+                    "- [ ] [P1] Approve LoopX board sharing",
+                    "  <!-- loopx: todo_id=todo_user_share status=open task_class=user_gate action_kind=decide -->",
+                    "",
+                    "## Agent Todo",
+                    "",
+                    "- [ ] [P2] Wire conservative board sync",
+                    "  <!-- loopx: todo_id=todo_agent_sync status=open task_class=advancement_task action_kind=sync_board required_write_scopes=loopx claimed_by=codex-main-control -->",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        registry.write_text(
+            json.dumps(
+                {
+                    "goals": [
+                        {
+                            "id": "goal_lark_sync_fixture",
+                            "repo": str(root),
+                            "state_file": "active-state.md",
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        sync_payload = sync_loopx_todos_to_lark_kanban(
+            LarkKanbanConfig(
+                **{"base_" + "token": "base_public_fixture"},
+                table_id="tbl_public_fixture",
+            ),
+            registry_path=registry,
+            goal_id="goal_lark_sync_fixture",
+            config_path=default_lark_kanban_config_path(registry),
+            execute=False,
+        )
+        assert sync_payload["ok"] is True, sync_payload
+        assert sync_payload["todo_count"] == 2, sync_payload
+        assert any(item["values"]["Status"] == "User Gate" for item in sync_payload["records"]), sync_payload
+        assert all(item["command"]["executed"] is False for item in sync_payload["records"]), sync_payload
 
     print("lark-kanban-control-plane-smoke: ok")
     return 0

@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
+from urllib.parse import parse_qs, urlparse
 
 
 LARK_KANBAN_SCHEMA_VERSION = "loopx_lark_kanban_control_plane_v0"
 LARK_KANBAN_HEARTBEAT_VERSION = "loopx_lark_kanban_heartbeat_v0"
+LARK_KANBAN_LOCAL_CONFIG_VERSION = "loopx_lark_kanban_local_config_v0"
 DEFAULT_TABLE_NAME = "LoopX Control Plane"
 DEFAULT_AGENT_ID = "codex-kanban-worker"
 DEFAULT_CLI_BIN = "lark-cli"
@@ -179,9 +182,8 @@ def lark_kanban_schema_payload(*, table_name: str = DEFAULT_TABLE_NAME) -> dict[
                 "context in the record detail and All Tasks grid."
             ),
             "configuration_note": (
-                "Lark's current shortcut CLI exposes Kanban cover settings, but "
-                "not the card field visibility list. Configure card fields in "
-                "the Lark UI until that API is available in lark-cli."
+                "lark-cli 1.0.56 exposes +view-set-visible-fields, so setup can "
+                "write the compact Kanban card field list directly."
             ),
         },
         "heartbeat_model": {
@@ -426,6 +428,16 @@ def _run_command(
             "timed_out": True,
             "json": None,
         }
+    except OSError as exc:
+        return {
+            "command": command,
+            "executed": True,
+            "ok": False,
+            "returncode": None,
+            "stdout": "",
+            "stderr": str(exc),
+            "json": None,
+        }
     stdout = str(result.get("stdout") or "")
     stderr = str(result.get("stderr") or "")
     parsed = _parse_json(stdout)
@@ -563,7 +575,170 @@ class LarkKanbanConfig:
     table_id: str
     view_id: str | None = DEFAULT_STATUS_QUEUE_VIEW
     cli_bin: str = DEFAULT_CLI_BIN
-    identity: str = "bot"
+    identity: str = "user"
+
+
+def default_lark_kanban_config_path(registry_path: Path | None = None) -> Path:
+    if registry_path is not None:
+        expanded = registry_path.expanduser()
+        if expanded.parent.name == ".loopx":
+            return expanded.parent / "lark-kanban.json"
+    return Path.cwd() / ".loopx" / "lark-kanban.json"
+
+
+def read_lark_kanban_local_config(path: Path) -> dict[str, Any]:
+    config_path = path.expanduser()
+    if not config_path.exists():
+        return {
+            "ok": True,
+            "exists": False,
+            "schema_version": LARK_KANBAN_LOCAL_CONFIG_VERSION,
+            "path": str(config_path),
+            "board": None,
+        }
+    try:
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return {
+            "ok": False,
+            "exists": True,
+            "schema_version": LARK_KANBAN_LOCAL_CONFIG_VERSION,
+            "path": str(config_path),
+            "error": f"invalid JSON: {exc}",
+            "board": None,
+        }
+    if not isinstance(payload, dict):
+        return {
+            "ok": False,
+            "exists": True,
+            "schema_version": LARK_KANBAN_LOCAL_CONFIG_VERSION,
+            "path": str(config_path),
+            "error": "config root must be a JSON object",
+            "board": None,
+        }
+    payload.setdefault("schema_version", LARK_KANBAN_LOCAL_CONFIG_VERSION)
+    payload["ok"] = True
+    payload["exists"] = True
+    payload["path"] = str(config_path)
+    return payload
+
+
+def write_lark_kanban_local_config(path: Path, payload: dict[str, Any]) -> None:
+    config_path = path.expanduser()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    to_write = dict(payload)
+    to_write.pop("ok", None)
+    to_write.pop("exists", None)
+    to_write["schema_version"] = LARK_KANBAN_LOCAL_CONFIG_VERSION
+    to_write["updated_at"] = now_lark_datetime()
+    config_path.write_text(json.dumps(to_write, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def parse_lark_base_url(base_url: str) -> dict[str, str]:
+    parsed = urlparse(base_url.strip())
+    query = parse_qs(parsed.query)
+    path = parsed.path.strip("/")
+    parts = [part for part in path.split("/") if part]
+    base_token = ""
+    for index, part in enumerate(parts):
+        if part in {"base", "bitable"} and index + 1 < len(parts):
+            base_token = parts[index + 1]
+            break
+    if not base_token and parts:
+        base_token = parts[-1]
+    table_id = _first_query_value(query, "table") or _first_query_value(query, "table_id")
+    view_id = _first_query_value(query, "view") or _first_query_value(query, "view_id")
+    return {
+        "base_token": base_token,
+        "table_id": table_id,
+        "view_id": view_id,
+    }
+
+
+def _first_query_value(query: dict[str, list[str]], key: str) -> str:
+    values = query.get(key) or []
+    return str(values[0]).strip() if values else ""
+
+
+def save_lark_kanban_board_config(
+    path: Path,
+    *,
+    base_token: str,
+    table_id: str,
+    view_id: str | None = None,
+    base_url: str | None = None,
+    base_name: str | None = None,
+    table_name: str | None = None,
+    cli_bin: str = DEFAULT_CLI_BIN,
+    identity: str = "user",
+    view_ids: dict[str, str] | None = None,
+    merge_existing: bool = True,
+) -> dict[str, Any]:
+    if not base_token:
+        raise ValueError("base token is required")
+    if not table_id:
+        raise ValueError("table id is required")
+    config_path = path.expanduser()
+    existing = read_lark_kanban_local_config(config_path) if merge_existing else {}
+    payload = existing if isinstance(existing, dict) and existing.get("ok") else {}
+    board = dict(payload.get("board") or {})
+    board.update(
+        {
+            "base_token": base_token,
+            "table_id": table_id,
+            "view_id": view_id or board.get("view_id") or DEFAULT_STATUS_QUEUE_VIEW,
+            "base_url": base_url or board.get("base_url") or "",
+            "base_name": base_name or board.get("base_name") or "",
+            "table_name": table_name or board.get("table_name") or table_id,
+            "cli_bin": cli_bin,
+            "identity": identity,
+            "view_ids": {
+                **(board.get("view_ids") if isinstance(board.get("view_ids"), dict) else {}),
+                **(view_ids or {}),
+            },
+        }
+    )
+    payload = {
+        "schema_version": LARK_KANBAN_LOCAL_CONFIG_VERSION,
+        "board": board,
+        "todo_records": payload.get("todo_records") if isinstance(payload.get("todo_records"), dict) else {},
+    }
+    write_lark_kanban_local_config(config_path, payload)
+    return {
+        "ok": True,
+        "schema_version": LARK_KANBAN_LOCAL_CONFIG_VERSION,
+        "path": str(config_path),
+        "board": board,
+        "next_commands": _next_lark_kanban_commands(board),
+    }
+
+
+def lark_kanban_config_from_payload(payload: dict[str, Any]) -> LarkKanbanConfig | None:
+    board = payload.get("board")
+    if not isinstance(board, dict):
+        return None
+    base_token = str(board.get("base_token") or "").strip()
+    table_id = str(board.get("table_id") or "").strip()
+    if not base_token or not table_id:
+        return None
+    return LarkKanbanConfig(
+        **{"base_" + "token": base_token},
+        table_id=table_id,
+        view_id=str(board.get("view_id") or DEFAULT_STATUS_QUEUE_VIEW),
+        cli_bin=str(board.get("cli_bin") or DEFAULT_CLI_BIN),
+        identity=str(board.get("identity") or "user"),
+    )
+
+
+def _next_lark_kanban_commands(board: dict[str, Any]) -> list[str]:
+    return [
+        "loopx lark-kanban doctor",
+        "loopx lark-kanban sync-loopx-todos --goal-id <goal-id> --execute",
+        (
+            "loopx lark-kanban heartbeat --execute-lark --agent-id "
+            f"{DEFAULT_AGENT_ID} --allow-command-prefix 'codex exec'"
+        ),
+    ]
 
 
 def build_record_upsert_command(
@@ -622,27 +797,82 @@ def build_create_board_plan(
     commands: list[list[str]] = []
     if not base_token:
         commands.append(
-            [cli_bin, "base", "+base-create", "--as", identity, "--name", base_name]
+            [
+                cli_bin,
+                "base",
+                "+base-create",
+                "--as",
+                identity,
+                "--name",
+                base_name,
+                "--table-name",
+                table_name,
+                "--fields",
+                json.dumps(lark_kanban_field_definitions(), ensure_ascii=False),
+            ]
+        )
+        commands.append(
+            [
+                cli_bin,
+                "base",
+                "+base-block-list",
+                "--as",
+                identity,
+                "--base-token",
+                "<base-token-from-create>",
+                "--type",
+                "table",
+            ]
         )
     token = base_token or "<base-token-from-create>"
     table_ref = "<table-id-from-create>"
-    commands.append(
-        [
-            cli_bin,
-            "base",
-            "+table-create",
-            "--as",
-            identity,
-            "--base-token",
-            token,
-            "--name",
-            table_name,
-            "--fields",
-            json.dumps(lark_kanban_field_definitions(), ensure_ascii=False),
-            "--view",
-            json.dumps(lark_kanban_views(), ensure_ascii=False),
-        ]
-    )
+    if base_token:
+        commands.append(
+            [
+                cli_bin,
+                "base",
+                "+table-create",
+                "--as",
+                identity,
+                "--base-token",
+                token,
+                "--name",
+                table_name,
+                "--fields",
+                json.dumps(lark_kanban_field_definitions(), ensure_ascii=False),
+                "--view",
+                json.dumps(lark_kanban_views(), ensure_ascii=False),
+            ]
+        )
+    else:
+        commands.extend(
+            [
+                [
+                    cli_bin,
+                    "base",
+                    "+view-create",
+                    "--as",
+                    identity,
+                    "--base-token",
+                    token,
+                    "--table-id",
+                    table_ref,
+                    "--json",
+                    json.dumps(lark_kanban_views(), ensure_ascii=False),
+                ],
+                [
+                    cli_bin,
+                    "base",
+                    "+view-list",
+                    "--as",
+                    identity,
+                    "--base-token",
+                    token,
+                    "--table-id",
+                    table_ref,
+                ],
+            ]
+        )
     if user_open_id:
         commands.append(
             [
@@ -733,7 +963,22 @@ def build_create_board_plan(
                 "--view-id",
                 "Kanban",
                 "--json",
-                json.dumps([{"field": "Status", "desc": False}], ensure_ascii=False),
+                json.dumps({"group_config": [{"field": "Status", "desc": False}]}, ensure_ascii=False),
+            ],
+            [
+                cli_bin,
+                "base",
+                "+view-set-visible-fields",
+                "--as",
+                identity,
+                "--base-token",
+                token,
+                "--table-id",
+                table_ref,
+                "--view-id",
+                "Kanban",
+                "--json",
+                json.dumps({"visible_fields": OPERATOR_CARD_FIELDS}, ensure_ascii=False),
             ],
         ]
     )
@@ -896,7 +1141,22 @@ def create_lark_kanban_board(
             "--view-id",
             "Kanban",
             "--json",
-            json.dumps([{"field": "Status", "desc": False}], ensure_ascii=False),
+            json.dumps({"group_config": [{"field": "Status", "desc": False}]}, ensure_ascii=False),
+        ],
+        [
+            cli_bin,
+            "base",
+            "+view-set-visible-fields",
+            "--as",
+            identity,
+            "--base-token",
+            token,
+            "--table-id",
+            table_ref,
+            "--view-id",
+            "Kanban",
+            "--json",
+            json.dumps({"visible_fields": OPERATOR_CARD_FIELDS}, ensure_ascii=False),
         ],
     ):
         result = _run_command(command, execute=execute, runner=runner)
@@ -923,22 +1183,853 @@ def _board_payload(
 
 
 def _extract_base_token(parsed: Any) -> str | None:
-    if not isinstance(parsed, dict):
-        return None
-    base = parsed.get("data", {}).get("base") if isinstance(parsed.get("data"), dict) else None
-    if isinstance(base, dict):
-        return str(base.get("base_token") or base.get("app_token") or "") or None
-    return None
+    return _find_first_string(parsed, ("base_token", "app_token"))
 
 
 def _extract_table_id(parsed: Any) -> str | None:
-    if not isinstance(parsed, dict):
-        return None
-    data = parsed.get("data") if isinstance(parsed.get("data"), dict) else {}
-    table = data.get("table") if isinstance(data, dict) else None
-    if isinstance(table, dict):
-        return str(table.get("id") or table.get("table_id") or "") or None
+    return _find_first_string(parsed, ("table_id", "id"), required_prefix="tbl")
+
+
+def _find_first_string(payload: Any, keys: tuple[str, ...], required_prefix: str | None = None) -> str | None:
+    if isinstance(payload, dict):
+        for key in keys:
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                candidate = value.strip()
+                if required_prefix is None or candidate.startswith(required_prefix):
+                    return candidate
+        for value in payload.values():
+            found = _find_first_string(value, keys, required_prefix=required_prefix)
+            if found:
+                return found
+    if isinstance(payload, list):
+        for value in payload:
+            found = _find_first_string(value, keys, required_prefix=required_prefix)
+            if found:
+                return found
     return None
+
+
+def _extract_created_record_id(parsed: Any) -> str | None:
+    return _find_first_record_id(parsed)
+
+
+def _find_first_record_id(payload: Any) -> str | None:
+    if isinstance(payload, dict):
+        ids = payload.get("record_id_list")
+        if isinstance(ids, list) and ids:
+            return str(ids[0])
+        for key in ("record_id", "id"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip().startswith("rec"):
+                return value.strip()
+        for value in payload.values():
+            found = _find_first_record_id(value)
+            if found:
+                return found
+    if isinstance(payload, list):
+        for value in payload:
+            found = _find_first_record_id(value)
+            if found:
+                return found
+    return None
+
+
+def _extract_table_id_from_blocks(parsed: Any, *, table_name: str | None = None) -> str | None:
+    blocks = _extract_list_from_payload(parsed, ("blocks", "items", "data"))
+    table_blocks = [
+        item
+        for item in blocks
+        if isinstance(item, dict)
+        and str(item.get("type") or item.get("resource_type") or "").lower() in {"table", "bitable_table", ""}
+    ]
+    if table_name:
+        for item in table_blocks:
+            if str(item.get("name") or item.get("block_name") or "").strip() == table_name:
+                return _string_id_from_dict(item, ("id", "block_id", "table_id"), prefix="tbl")
+    for item in table_blocks:
+        table_id = _string_id_from_dict(item, ("id", "block_id", "table_id"), prefix="tbl")
+        if table_id:
+            return table_id
+    return _extract_table_id(parsed)
+
+
+def _extract_view_ids(parsed: Any) -> dict[str, str]:
+    views = _extract_list_from_payload(parsed, ("views", "items", "data"))
+    result: dict[str, str] = {}
+    for item in views:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or item.get("view_name") or "").strip()
+        view_id = _string_id_from_dict(item, ("view_id", "id"), prefix="vew") or _string_id_from_dict(
+            item,
+            ("view_id", "id"),
+            prefix=None,
+        )
+        if name and view_id:
+            result[name] = view_id
+    return result
+
+
+def _extract_list_from_payload(payload: Any, keys: tuple[str, ...]) -> list[Any]:
+    if isinstance(payload, list):
+        return payload
+    if not isinstance(payload, dict):
+        return []
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+    data = payload.get("data")
+    if isinstance(data, dict):
+        for key in keys:
+            value = data.get(key)
+            if isinstance(value, list):
+                return value
+    return []
+
+
+def _string_id_from_dict(item: dict[str, Any], keys: tuple[str, ...], *, prefix: str | None) -> str | None:
+    for key in keys:
+        value = item.get(key)
+        if not isinstance(value, str):
+            continue
+        candidate = value.strip()
+        if candidate and (prefix is None or candidate.startswith(prefix)):
+            return candidate
+    return None
+
+
+def use_lark_kanban_board(
+    *,
+    config_path: Path,
+    base_url: str | None = None,
+    base_token: str | None = None,
+    table_id: str | None = None,
+    view_id: str | None = None,
+    cli_bin: str = DEFAULT_CLI_BIN,
+    identity: str = "user",
+) -> dict[str, Any]:
+    parsed = parse_lark_base_url(base_url) if base_url else {}
+    effective_base_token = str(base_token or parsed.get("base_token") or "").strip()
+    effective_table_id = str(table_id or parsed.get("table_id") or "").strip()
+    effective_view_id = str(view_id or parsed.get("view_id") or DEFAULT_STATUS_QUEUE_VIEW).strip()
+    return save_lark_kanban_board_config(
+        config_path,
+        **{"base_" + "token": effective_base_token},
+        table_id=effective_table_id,
+        view_id=effective_view_id,
+        base_url=base_url,
+        cli_bin=cli_bin,
+        identity=identity,
+    )
+
+
+def setup_lark_kanban_board(
+    *,
+    config_path: Path,
+    base_name: str,
+    table_name: str = DEFAULT_TABLE_NAME,
+    base_url: str | None = None,
+    base_token: str | None = None,
+    table_id: str | None = None,
+    cli_bin: str = DEFAULT_CLI_BIN,
+    identity: str = "user",
+    execute: bool = False,
+    runner: CommandRunner = default_subprocess_runner,
+) -> dict[str, Any]:
+    commands: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    existing = read_lark_kanban_local_config(config_path)
+    existing_board = existing.get("board") if isinstance(existing.get("board"), dict) else {}
+    parsed_url = parse_lark_base_url(base_url) if base_url else {}
+    effective_base_token = str(
+        base_token or parsed_url.get("base_token") or existing_board.get("base_token") or ""
+    ).strip()
+    effective_table_id = str(table_id or parsed_url.get("table_id") or existing_board.get("table_id") or "").strip()
+    view_ids = existing_board.get("view_ids") if isinstance(existing_board.get("view_ids"), dict) else {}
+
+    preflight = _lark_kanban_preflight(cli_bin=cli_bin, identity=identity, runner=runner)
+    commands.extend(preflight["commands"])
+    if execute and not preflight["identity_available"]:
+        return {
+            "ok": False,
+            "schema_version": LARK_KANBAN_SCHEMA_VERSION,
+            "execute": execute,
+            "config_path": str(config_path),
+            "base_token": effective_base_token or None,
+            "table_id": effective_table_id or None,
+            "commands": commands,
+            "warnings": preflight["warnings"],
+            "error": _identity_error(identity),
+        }
+    warnings.extend(preflight["warnings"])
+
+    created_base = False
+    created_table = False
+    if not effective_base_token:
+        created_base = True
+        create = _run_command(
+            [
+                cli_bin,
+                "base",
+                "+base-create",
+                "--as",
+                identity,
+                "--name",
+                base_name,
+                "--table-name",
+                table_name,
+                "--fields",
+                json.dumps(lark_kanban_field_definitions(), ensure_ascii=False),
+            ],
+            execute=execute,
+            runner=runner,
+        )
+        commands.append(create)
+        if execute:
+            if not create.get("ok"):
+                return _setup_payload(False, execute, config_path, commands, warnings, effective_base_token, effective_table_id)
+            effective_base_token = _extract_base_token(create.get("json")) or ""
+            if not effective_base_token:
+                return _setup_payload(
+                    False,
+                    execute,
+                    config_path,
+                    commands,
+                    warnings,
+                    effective_base_token,
+                    effective_table_id,
+                    error="base-create did not return a usable Base token",
+                )
+        else:
+            effective_base_token = "<base-token-from-create>"
+    if not effective_table_id:
+        if created_base:
+            blocks = _run_command(
+                [
+                    cli_bin,
+                    "base",
+                    "+base-block-list",
+                    "--as",
+                    identity,
+                    "--base-token",
+                    effective_base_token,
+                    "--type",
+                    "table",
+                ],
+                execute=execute,
+                runner=runner,
+            )
+            commands.append(blocks)
+            if execute:
+                if not blocks.get("ok"):
+                    return _setup_payload(False, execute, config_path, commands, warnings, effective_base_token, effective_table_id)
+                effective_table_id = _extract_table_id_from_blocks(blocks.get("json"), table_name=table_name) or ""
+                if not effective_table_id:
+                    return _setup_payload(
+                        False,
+                        execute,
+                        config_path,
+                        commands,
+                        warnings,
+                        effective_base_token,
+                        effective_table_id,
+                        error="base-block-list did not return a usable table id",
+                    )
+            else:
+                effective_table_id = "<table-id-from-base-block-list>"
+        else:
+            created_table = True
+            table_create = _run_command(
+                [
+                    cli_bin,
+                    "base",
+                    "+table-create",
+                    "--as",
+                    identity,
+                    "--base-token",
+                    effective_base_token,
+                    "--name",
+                    table_name,
+                    "--fields",
+                    json.dumps(lark_kanban_field_definitions(), ensure_ascii=False),
+                    "--view",
+                    json.dumps(lark_kanban_views(), ensure_ascii=False),
+                ],
+                execute=execute,
+                runner=runner,
+            )
+            commands.append(table_create)
+            if execute:
+                if not table_create.get("ok"):
+                    return _setup_payload(False, execute, config_path, commands, warnings, effective_base_token, effective_table_id)
+                effective_table_id = _extract_table_id(table_create.get("json")) or ""
+                if not effective_table_id:
+                    return _setup_payload(
+                        False,
+                        execute,
+                        config_path,
+                        commands,
+                        warnings,
+                        effective_base_token,
+                        effective_table_id,
+                        error="table-create did not return a usable table id",
+                    )
+            else:
+                effective_table_id = "<table-id-from-table-create>"
+
+    if execute:
+        view_ids = _refresh_view_ids(
+            cli_bin=cli_bin,
+            identity=identity,
+            **{"base_" + "token": effective_base_token},
+            table_id=effective_table_id,
+            commands=commands,
+            runner=runner,
+        )
+    else:
+        view_ids = {str(name): str(value) for name, value in view_ids.items()}
+
+    missing_view_names = [view["name"] for view in lark_kanban_views() if view["name"] not in view_ids]
+    should_create_views = bool(missing_view_names) and (created_base or not created_table)
+    if should_create_views:
+        view_create = _run_command(
+            [
+                cli_bin,
+                "base",
+                "+view-create",
+                "--as",
+                identity,
+                "--base-token",
+                effective_base_token,
+                "--table-id",
+                effective_table_id,
+                "--json",
+                json.dumps(
+                    [view for view in lark_kanban_views() if view["name"] in missing_view_names],
+                    ensure_ascii=False,
+                ),
+            ],
+            execute=execute,
+            runner=runner,
+        )
+        commands.append(view_create)
+        if execute and not view_create.get("ok"):
+            return _setup_payload(False, execute, config_path, commands, warnings, effective_base_token, effective_table_id)
+        if execute:
+            view_ids = _refresh_view_ids(
+                cli_bin=cli_bin,
+                identity=identity,
+                **{"base_" + "token": effective_base_token},
+                table_id=effective_table_id,
+                commands=commands,
+                runner=runner,
+            )
+
+    if not view_ids:
+        view_ids = {view["name"]: view["name"] for view in lark_kanban_views()}
+    for command in _view_configuration_commands(
+        cli_bin=cli_bin,
+        identity=identity,
+        **{"base_" + "token": effective_base_token},
+        table_id=effective_table_id,
+        view_ids=view_ids,
+    ):
+        result = _run_command(command, execute=execute, runner=runner)
+        commands.append(result)
+        if execute and not result.get("ok"):
+            return _setup_payload(False, execute, config_path, commands, warnings, effective_base_token, effective_table_id)
+
+    config_payload: dict[str, Any] | None = None
+    if execute:
+        config_payload = save_lark_kanban_board_config(
+            config_path,
+            **{"base_" + "token": effective_base_token},
+            table_id=effective_table_id,
+            view_id=view_ids.get(DEFAULT_STATUS_QUEUE_VIEW) or DEFAULT_STATUS_QUEUE_VIEW,
+            base_url=base_url,
+            base_name=base_name,
+            table_name=table_name,
+            cli_bin=cli_bin,
+            identity=identity,
+            view_ids=view_ids,
+        )
+    return {
+        "ok": True,
+        "schema_version": LARK_KANBAN_SCHEMA_VERSION,
+        "execute": execute,
+        "config_path": str(config_path),
+        "created_base": created_base,
+        "created_table": created_table,
+        "base_token": effective_base_token,
+        "table_id": effective_table_id,
+        "view_ids": view_ids,
+        "operator_card_fields": OPERATOR_CARD_FIELDS,
+        "commands": commands,
+        "warnings": warnings,
+        "config": config_payload,
+        "next_commands": _next_lark_kanban_commands(config_payload.get("board", {}) if config_payload else {}),
+    }
+
+
+def _setup_payload(
+    ok: bool,
+    execute: bool,
+    config_path: Path,
+    commands: list[dict[str, Any]],
+    warnings: list[str],
+    base_token: str | None,
+    table_id: str | None,
+    *,
+    error: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "ok": ok,
+        "schema_version": LARK_KANBAN_SCHEMA_VERSION,
+        "execute": execute,
+        "config_path": str(config_path),
+        "base_token": base_token,
+        "table_id": table_id,
+        "commands": commands,
+        "warnings": warnings,
+        "error": error or next((_command_error(item) for item in commands if not item.get("ok")), "unknown"),
+    }
+
+
+def _refresh_view_ids(
+    *,
+    cli_bin: str,
+    identity: str,
+    base_token: str,
+    table_id: str,
+    commands: list[dict[str, Any]],
+    runner: CommandRunner,
+) -> dict[str, str]:
+    view_list = _run_command(
+        [
+            cli_bin,
+            "base",
+            "+view-list",
+            "--as",
+            identity,
+            "--base-token",
+            base_token,
+            "--table-id",
+            table_id,
+        ],
+        execute=True,
+        runner=runner,
+    )
+    commands.append(view_list)
+    if not view_list.get("ok"):
+        return {}
+    return _extract_view_ids(view_list.get("json"))
+
+
+def _view_configuration_commands(
+    *,
+    cli_bin: str,
+    identity: str,
+    base_token: str,
+    table_id: str,
+    view_ids: dict[str, str],
+) -> list[list[str]]:
+    worker_view = view_ids.get(DEFAULT_STATUS_QUEUE_VIEW) or DEFAULT_STATUS_QUEUE_VIEW
+    user_gate_view = view_ids.get("User Gates") or "User Gates"
+    kanban_view = view_ids.get("Kanban") or "Kanban"
+    return [
+        [
+            cli_bin,
+            "base",
+            "+view-set-filter",
+            "--as",
+            identity,
+            "--base-token",
+            base_token,
+            "--table-id",
+            table_id,
+            "--view-id",
+            worker_view,
+            "--json",
+            json.dumps(
+                {
+                    "logic": "and",
+                    "conditions": [["Status", "intersects", [STATUS_TODO, STATUS_CLAIMED]]],
+                },
+                ensure_ascii=False,
+            ),
+        ],
+        [
+            cli_bin,
+            "base",
+            "+view-set-filter",
+            "--as",
+            identity,
+            "--base-token",
+            base_token,
+            "--table-id",
+            table_id,
+            "--view-id",
+            user_gate_view,
+            "--json",
+            json.dumps(
+                {
+                    "logic": "and",
+                    "conditions": [["Status", "intersects", [STATUS_USER_GATE]]],
+                },
+                ensure_ascii=False,
+            ),
+        ],
+        [
+            cli_bin,
+            "base",
+            "+view-set-group",
+            "--as",
+            identity,
+            "--base-token",
+            base_token,
+            "--table-id",
+            table_id,
+            "--view-id",
+            kanban_view,
+            "--json",
+            json.dumps({"group_config": [{"field": "Status", "desc": False}]}, ensure_ascii=False),
+        ],
+        [
+            cli_bin,
+            "base",
+            "+view-set-visible-fields",
+            "--as",
+            identity,
+            "--base-token",
+            base_token,
+            "--table-id",
+            table_id,
+            "--view-id",
+            kanban_view,
+            "--json",
+            json.dumps({"visible_fields": OPERATOR_CARD_FIELDS}, ensure_ascii=False),
+        ],
+    ]
+
+
+def lark_kanban_doctor(
+    *,
+    config_path: Path,
+    cli_bin: str = DEFAULT_CLI_BIN,
+    identity: str = "user",
+    check_board: bool = True,
+    require_board: bool = False,
+    runner: CommandRunner = default_subprocess_runner,
+) -> dict[str, Any]:
+    commands: list[dict[str, Any]] = []
+    issues: list[dict[str, str]] = []
+    preflight = _lark_kanban_preflight(cli_bin=cli_bin, identity=identity, runner=runner)
+    commands.extend(preflight["commands"])
+    for warning in preflight["warnings"]:
+        issues.append({"severity": "warning", "message": warning})
+    if not preflight["cli_ok"]:
+        issues.append({"severity": "error", "message": f"{cli_bin} is not runnable"})
+    if not preflight["identity_available"]:
+        issues.append({"severity": "error", "message": _identity_error(identity)})
+
+    config_payload = read_lark_kanban_local_config(config_path)
+    board_config = lark_kanban_config_from_payload(config_payload)
+    if not config_payload.get("exists"):
+        issues.append(
+            {
+                "severity": "error" if require_board else "warning",
+                "message": f"no local board config at {config_path}; run lark-kanban setup or use",
+            }
+        )
+    elif not board_config:
+        issues.append({"severity": "error", "message": f"local board config is incomplete: {config_path}"})
+
+    if check_board and board_config and preflight["identity_available"]:
+        for command in (
+            [
+                board_config.cli_bin,
+                "base",
+                "+base-get",
+                "--as",
+                board_config.identity,
+                "--base-token",
+                board_config.base_token,
+            ],
+            [
+                board_config.cli_bin,
+                "base",
+                "+base-block-list",
+                "--as",
+                board_config.identity,
+                "--base-token",
+                board_config.base_token,
+                "--type",
+                "table",
+            ],
+            [
+                board_config.cli_bin,
+                "base",
+                "+view-list",
+                "--as",
+                board_config.identity,
+                "--base-token",
+                board_config.base_token,
+                "--table-id",
+                board_config.table_id,
+            ],
+        ):
+            result = _run_command(command, execute=True, runner=runner)
+            commands.append(result)
+            if not result.get("ok"):
+                issues.append({"severity": "error", "message": _command_error(result)})
+
+    return {
+        "ok": not any(issue["severity"] == "error" for issue in issues),
+        "schema_version": "loopx_lark_kanban_doctor_v0",
+        "config_path": str(config_path),
+        "identity": identity,
+        "issues": issues,
+        "config": config_payload,
+        "commands": commands,
+    }
+
+
+def _lark_kanban_preflight(
+    *,
+    cli_bin: str,
+    identity: str,
+    runner: CommandRunner,
+) -> dict[str, Any]:
+    commands: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    version = _run_command([cli_bin, "--version"], execute=True, runner=runner)
+    commands.append(version)
+    cli_ok = bool(version.get("ok"))
+    version_tuple = _version_tuple(str(version.get("stdout") or ""))
+    if cli_ok and version_tuple and version_tuple < (1, 0, 56):
+        warnings.append("lark-cli should be upgraded to at least 1.0.56 for setup visible-field support")
+    auth = _run_command([cli_bin, "auth", "status"], execute=True, runner=runner)
+    commands.append(auth)
+    identity_available = _identity_available(auth.get("json"), identity)
+    for help_command in (
+        [cli_bin, "base", "+base-create", "--help"],
+        [cli_bin, "base", "+base-block-list", "--help"],
+        [cli_bin, "base", "+view-list", "--help"],
+        [cli_bin, "base", "+view-set-group", "--help"],
+        [cli_bin, "base", "+view-set-visible-fields", "--help"],
+    ):
+        result = _run_command(help_command, execute=True, runner=runner)
+        commands.append(result)
+        if not result.get("ok"):
+            warnings.append(f"missing lark-cli shortcut: {shlex.join(help_command[2:-1])}")
+    return {
+        "commands": commands,
+        "warnings": warnings,
+        "cli_ok": cli_ok,
+        "identity_available": identity_available,
+    }
+
+
+def _version_tuple(text: str) -> tuple[int, ...] | None:
+    match = re.search(r"\d+(?:\.\d+)+", text)
+    if not match:
+        return None
+    return tuple(int(part) for part in match.group(0).split("."))
+
+
+def _identity_available(parsed: Any, identity: str) -> bool:
+    if not isinstance(parsed, dict):
+        return False
+    identities = parsed.get("identities") if isinstance(parsed.get("identities"), dict) else {}
+    if identity == "auto":
+        active = str(parsed.get("identity") or "").strip()
+        if active and isinstance(identities.get(active), dict):
+            return bool(identities[active].get("available"))
+        return any(isinstance(item, dict) and bool(item.get("available")) for item in identities.values())
+    status = identities.get(identity)
+    return isinstance(status, dict) and bool(status.get("available"))
+
+
+def _identity_error(identity: str) -> str:
+    if identity == "user":
+        return "lark-cli user identity is unavailable; run `lark-cli auth login --domain base --recommend`"
+    return f"lark-cli identity {identity!r} is unavailable; run `lark-cli auth status`"
+
+
+def sync_loopx_todos_to_lark_kanban(
+    config: LarkKanbanConfig,
+    *,
+    registry_path: Path,
+    goal_id: str,
+    config_path: Path | None = None,
+    project: Path | None = None,
+    state_file: Path | None = None,
+    include_done: bool = False,
+    limit: int = 50,
+    execute: bool = False,
+    runner: CommandRunner = default_subprocess_runner,
+) -> dict[str, Any]:
+    from .todos import resolve_todo_state_path, section_bounds, todo_blocks, todo_priority_prefix
+
+    resolved_project, resolved_state_file = resolve_todo_state_path(
+        registry_path=registry_path,
+        goal_id=goal_id,
+        project=project,
+        state_file=state_file,
+    )
+    lines = resolved_state_file.read_text(encoding="utf-8").splitlines()
+    todos: list[dict[str, Any]] = []
+    for role in ("user", "agent"):
+        bounds = section_bounds(lines, role)
+        if not bounds:
+            continue
+        start, end, heading = bounds
+        for block in todo_blocks(lines, start, end, role=role, source_section=heading):
+            if block.get("done") and not include_done:
+                continue
+            todos.append({**block, "role": role, "source_section": heading})
+    todos = todos[:limit]
+
+    local = read_lark_kanban_local_config(config_path) if config_path else {}
+    record_map = dict(local.get("todo_records") or {}) if isinstance(local.get("todo_records"), dict) else {}
+    commands: list[dict[str, Any]] = []
+    if execute:
+        list_config = LarkKanbanConfig(
+            **{"base_" + "token": config.base_token},
+            table_id=config.table_id,
+            view_id=None,
+            cli_bin=config.cli_bin,
+            identity=config.identity,
+        )
+        list_result = _run_command(build_record_list_command(list_config), execute=True, runner=runner)
+        commands.append(list_result)
+        if list_result.get("ok"):
+            for record in lark_record_rows(list_result.get("json") if isinstance(list_result.get("json"), dict) else {}):
+                todo_id = str(record.get("LoopX Todo ID") or "").strip()
+                row_goal_id = str(record.get("LoopX Goal ID") or "").strip()
+                record_id = str(record.get("_record_id") or "").strip()
+                if todo_id and row_goal_id and record_id:
+                    record_map[f"{row_goal_id}:{todo_id}"] = record_id
+
+    results: list[dict[str, Any]] = []
+    ok = True
+    for block in todos:
+        todo_id = str(block.get("todo_id") or "").strip()
+        key = f"{goal_id}:{todo_id}"
+        values = _lark_record_from_todo_block(
+            block,
+            goal_id=goal_id,
+            state_file=resolved_state_file,
+            priority=todo_priority_prefix(str(block.get("text") or "")) or "P2",
+        )
+        result = _run_command(
+            build_record_upsert_command(config, record_id=record_map.get(key), values=values),
+            execute=execute,
+            runner=runner,
+        )
+        commands.append(result)
+        record_id = _extract_created_record_id(result.get("json")) or record_map.get(key)
+        if execute and result.get("ok") and record_id:
+            record_map[key] = record_id
+        results.append(
+            {
+                "todo_id": todo_id,
+                "record_id": record_id,
+                "command": result,
+                "values": values,
+            }
+        )
+        ok = ok and bool(result.get("ok"))
+        if execute and not result.get("ok"):
+            break
+
+    if execute and config_path and ok:
+        board = local.get("board") if isinstance(local.get("board"), dict) else {}
+        if not board:
+            board = {
+                "base_token": config.base_token,
+                "table_id": config.table_id,
+                "view_id": config.view_id,
+                "cli_bin": config.cli_bin,
+                "identity": config.identity,
+            }
+        write_lark_kanban_local_config(
+            config_path,
+            {
+                "schema_version": LARK_KANBAN_LOCAL_CONFIG_VERSION,
+                "board": board,
+                "todo_records": record_map,
+            },
+        )
+
+    return {
+        "ok": ok,
+        "schema_version": "loopx_lark_kanban_sync_todos_v0",
+        "execute": execute,
+        "goal_id": goal_id,
+        "project": str(resolved_project) if resolved_project else None,
+        "state_file": str(resolved_state_file),
+        "todo_count": len(todos),
+        "records": results,
+        "commands": commands,
+        "config_path": str(config_path) if config_path else None,
+    }
+
+
+def _lark_record_from_todo_block(
+    block: dict[str, Any],
+    *,
+    goal_id: str,
+    state_file: Path,
+    priority: str,
+) -> dict[str, Any]:
+    role = str(block.get("role") or "agent")
+    status = str(block.get("status") or "").strip()
+    task_class = str(block.get("task_class") or ("user_gate" if role == "user" else "advancement_task")).strip()
+    claimed_by = str(block.get("claimed_by") or "").strip()
+    lark_status = STATUS_TODO
+    if block.get("done") or status == "done":
+        lark_status = STATUS_DONE
+    elif status == "blocked" or task_class == "blocker":
+        lark_status = STATUS_BLOCKED
+    elif role == "user" or task_class == "user_gate" or status == "deferred":
+        lark_status = STATUS_USER_GATE
+    elif claimed_by:
+        lark_status = STATUS_CLAIMED
+    claim = CLAIM_UNCLAIMED
+    if lark_status == STATUS_USER_GATE:
+        claim = CLAIM_HUMAN
+    elif claimed_by:
+        claim = CLAIM_AGENT
+    scope = block.get("required_write_scopes")
+    if isinstance(scope, list):
+        scope_text = ", ".join(str(item) for item in scope)
+    else:
+        scope_text = str(scope or "")
+    evidence = str(block.get("evidence") or block.get("reason") or block.get("note") or "")
+    text = str(block.get("text") or "")
+    return {
+        "Task": text,
+        "Status": lark_status,
+        "Claim": claim,
+        "Claimed By": claimed_by,
+        "Priority": priority if priority in {"P0", "P1", "P2", "P3"} else "P2",
+        "Task Class": task_class,
+        "Action Kind": str(block.get("action_kind") or "sync_loopx_todo"),
+        "LoopX Goal ID": goal_id,
+        "LoopX Todo ID": str(block.get("todo_id") or ""),
+        "Scope": scope_text,
+        "User Gate": text if lark_status == STATUS_USER_GATE else "",
+        "Handoff": f"Synced from LoopX active state: {state_file.name}",
+        "Evidence": evidence,
+        "Run History": f"synced from LoopX todo status={status or 'open'}",
+        "Worker Command": "",
+        "Workdir": str(state_file.parent),
+        "Last Error": "",
+        "Last Result Code": None,
+    }
 
 
 def seed_lark_kanban_task(
@@ -990,19 +2081,6 @@ def seed_lark_kanban_records(
         "created_record_ids": [item.get("record_id") for item in results],
         "records": results,
     }
-
-
-def _extract_created_record_id(parsed: Any) -> str | None:
-    if not isinstance(parsed, dict):
-        return None
-    record = parsed.get("data", {}).get("record") if isinstance(parsed.get("data"), dict) else None
-    if not isinstance(record, dict):
-        return None
-    ids = record.get("record_id_list")
-    if isinstance(ids, list) and ids:
-        return str(ids[0])
-    return str(record.get("record_id") or record.get("id") or "") or None
-
 
 def lark_kanban_heartbeat(
     config: LarkKanbanConfig,
