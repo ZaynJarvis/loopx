@@ -1,0 +1,201 @@
+{
+  "schema_version": "department_live_generated_fixture_seed_v0",
+  "fixture_id": "department_live_generated_rollout_seed_20260623T1441Z_public_v0",
+  "goal_id": "loopx-meta",
+  "generated_at": "2026-06-23T14:41:20Z",
+  "purpose": "Public-safe compact seed captured from real LoopX CLI runs so frontstage and department-review fixtures are tested against noisy live control-plane shapes, not only curated storyline data.",
+  "public_boundary": {
+    "raw_task_text_recorded": false,
+    "raw_logs_recorded": false,
+    "raw_trajectory_recorded": false,
+    "raw_session_transcript_recorded": false,
+    "credential_values_recorded": false,
+    "absolute_paths_recorded": false,
+    "private_material_body_recorded": false
+  },
+  "capture_contract": {
+    "source": "live_loopx_cli_capture",
+    "capture_mode": "real_commands_then_public_safe_summary",
+    "raw_payloads_committed": false,
+    "scrubbed_fields": [
+      "registry path",
+      "runtime root",
+      "project paths",
+      "raw run bodies"
+    ],
+    "commands": [
+      {
+        "command_id": "quota_should_run_product_capability",
+        "command": "loopx --format json quota should-run --goal-id loopx-meta --agent-id codex-product-capability",
+        "payload_bytes_observed": 139011
+      },
+      {
+        "command_id": "global_status",
+        "command": "loopx --format json status",
+        "payload_bytes_observed": 708624
+      },
+      {
+        "command_id": "history_recent",
+        "command": "loopx --format json history --goal-id loopx-meta --limit 3",
+        "payload_bytes_observed": 12084
+      }
+    ]
+  },
+  "observed_control_plane": {
+    "quota_should_run": {
+      "decision": "run",
+      "should_run": true,
+      "effective_action": "normal_run",
+      "normal_delivery_allowed": true,
+      "workspace_repair_allowed": false,
+      "reason": "1 compute quota; eligible for the next automatic agent turn",
+      "recommended_action": "[P0-1] Define department-facing long-horizon Agent state protocol v0 across startup, process, ending, evidence, gate, reward, and handoff.",
+      "interaction_contract": {
+        "schema_version": "loopx_interaction_contract_v0",
+        "mode": "bounded_delivery",
+        "user_channel": {
+          "action_required": false,
+          "notify": "DONT_NOTIFY"
+        },
+        "agent_channel": {
+          "must_attempt": true,
+          "delivery_allowed": true,
+          "quiet_noop_allowed": false,
+          "primary_action": "choose one of 7 capability-runnable todo(s) after steering audit"
+        },
+        "cli_channel": {
+          "spend_allowed_now": false,
+          "spend_after_validation": true,
+          "spend_policy": "spend once after validated writeback"
+        }
+      },
+      "capability_gate": {
+        "runnable_count": 7,
+        "selection_policy": "agent_steering_audit_over_runnable_candidates"
+      },
+      "agent_todo_summary": {
+        "open_count": 84,
+        "current_agent_claimed_open_count": 5,
+        "current_agent_deferred_resume_count": 0,
+        "deferred_visibility_limit": 8,
+        "first_executable_items": [
+          {
+            "todo_id": "todo_29eba8f6174e",
+            "priority": "P0-1",
+            "status": "open",
+            "claimed_by": "codex-product-capability",
+            "title": "Define department-facing long-horizon Agent state protocol v0 across startup, process, ending, evidence, gate, reward, and handoff."
+          },
+          {
+            "todo_id": "todo_814f6069b7a2",
+            "priority": "P0-2",
+            "status": "open",
+            "claimed_by": "codex-product-capability",
+            "title": "Consolidate the interaction-pattern catalog into a department-readable priority model with Human-in-the-loop as first-class state."
+          },
+          {
+            "todo_id": "todo_ba1830f8e6c5",
+            "priority": "P0-4",
+            "status": "open",
+            "claimed_by": "codex-product-capability",
+            "title": "Design recoverability for long-horizon work via commit-todo-state linkage, rollback packets, and compensating todos."
+          }
+        ]
+      },
+      "user_todo_summary": {
+        "open_count": 0,
+        "first_open_items": []
+      }
+    },
+    "status": {
+      "goal_count": 8,
+      "run_count": 6660,
+      "todo_index": {
+        "schema_version": "todo_index_v0",
+        "total_count": 167,
+        "visible_count": 167
+      },
+      "event_ledger_summary": {
+        "source": "run_history",
+        "sample_run_count": 20,
+        "events_24h": 20,
+        "by_class_24h": {
+          "accounting": 8,
+          "decision": 0,
+          "evidence": 0,
+          "state": 0,
+          "work": 12
+        },
+        "latest_event_class": "accounting"
+      },
+      "usage_summary": {
+        "runs_24h": 20,
+        "quota_spend_slots_24h": 8,
+        "automation_run_count_24h": 8,
+        "progress_signal_run_count_24h": 12
+      }
+    },
+    "history_recent": [
+      {
+        "generated_at": "2026-06-23T22:39:36+08:00",
+        "classification": "quota_slot_spent",
+        "recommended_action": "[P0-1] Define department-facing long-horizon Agent state protocol v0 across startup, process, ending, evidence, gate, reward, and handoff."
+      },
+      {
+        "generated_at": "2026-06-23T22:38:48+08:00",
+        "classification": "loopx_release_and_heartbeat_prompts_upgraded",
+        "delivery_batch_scale": "single_surface",
+        "delivery_outcome": "outcome_progress",
+        "recommended_action": "LoopX shared CLI upgraded to release 20260623T143510Z; main-control, side-bypass, and product-capability heartbeat prompts refreshed from latest thin generator."
+      },
+      {
+        "generated_at": "2026-06-23T22:33:48+08:00",
+        "classification": "quota_slot_spent",
+        "recommended_action": "[P0-1] Define department-facing long-horizon Agent state protocol v0 across startup, process, ending, evidence, gate, reward, and handoff."
+      }
+    ]
+  },
+  "observed_warnings": [
+    {
+      "warning_kind": "stale_latest_run_projection",
+      "severity": "warning",
+      "requires_refresh_state": true,
+      "reason": "active_state_updated_after_latest_run"
+    },
+    {
+      "warning_kind": "completed_agent_todo_archive_required",
+      "requires_archive": true,
+      "active_done_count": 125,
+      "active_open_count": 84
+    },
+    {
+      "warning_kind": "promotion_readiness_stale",
+      "freshness_status": "stale",
+      "requires_readiness_run": true,
+      "age_hours_observed": 46.07
+    }
+  ],
+  "frontend_noise_cases": [
+    {
+      "case_id": "large_status_payload",
+      "why_it_matters": "The live status payload is much larger than the curated fixture and must be summarized before first-screen rendering."
+    },
+    {
+      "case_id": "missing_optional_delivery_fields",
+      "why_it_matters": "Quota spend history entries may not carry delivery_batch_scale or delivery_outcome, so the UI must render incomplete recent events."
+    },
+    {
+      "case_id": "warnings_are_first_class",
+      "why_it_matters": "Stale projection, archive pressure, and stale promotion readiness are real control-plane signals, not fixture errors."
+    },
+    {
+      "case_id": "no_user_gate_but_agent_must_attempt",
+      "why_it_matters": "A quiet user channel can coexist with an agent_channel.must_attempt=true contract."
+    }
+  ],
+  "fixture_pairing": {
+    "curated_story_fixture": "examples/fixtures/department-self-iteration-rollout.public.json",
+    "live_seed_fixture": "examples/fixtures/department-live-generated-rollout-seed.public.json",
+    "pairing_rule": "Use curated fixture for department narrative coverage; use live seed for payload-size, warning, missing-field, and routing-noise coverage."
+  }
+}

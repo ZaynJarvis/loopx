@@ -19,7 +19,7 @@ LoopX 的部门级叙事不应停在“自动续航”或“todo 列表”。它
 | 2026-06-23 | 已完成 `P0-prep-1`，PR #602 合入。 | `loopx_rollout_event_v0` 增加 lane、state transition、causality、handoff、code refs 等可选字段，为三 agent 动画打基础。 |
 | 2026-06-23 | 本轮根据用户反馈重写部门协议文档。 | 把状态定义拆成源事实协议和展示投影协议；把范式扩展到 14 个；补充历史动画的推断补齐策略。 |
 | 2026-06-23 | 前端实现 todo 已交给 `codex-side-bypass`，并等待最小 rollout/fixture。 | 产品能力 lane 只负责先产出少量 public-safe rollout 输入；旁路基于该输入做 sufficiency check 和 UI。 |
-| 当前 | 推进 `P0-prep-2`。 | 生成 public-safe 三 agent 自迭代 fixture，用现有历史加可审计推断补齐主控、旁路、产品能力三条 lane。 |
+| 当前 | 提升 `P0-prep-2` 验收口径。 | fixture 必须双轨：curated/inferred story 覆盖部门叙事，live-generated seed 来自真实 LoopX CLI/heartbeat 跑一阵子的 public-safe 摘要，用来暴露噪声、缺字段、warning 和 payload 规模。 |
 
 当前最重要的产品目标可以压缩成一句话：
 
@@ -64,7 +64,8 @@ LoopX 的状态必须分两层讲清楚，否则部门汇报会混淆“事实�
 | `task_graph_projection_v0` | [`docs/reference/protocols/task-graph-projection-v0.md`](../reference/protocols/task-graph-projection-v0.md) | 文档已有，落地不足 | 可表达 blocks、validates、handoff、supersedes、rollback 等图关系。 |
 | `frontstage dashboard` | [`apps/dashboard/src/views/frontstage-page.tsx`](../../apps/dashboard/src/views/frontstage-page.tsx) | 已有基础 | 已能展示 ops mode、goal_channel_projection、demo fixture fallback。 |
 | `rollout_event_summary_v0` | [`loopx/rollout_event_log.py`](../../loopx/rollout_event_log.py) | 已实现 | 可汇总 event kind、agent、todo、classification，但还未充分进入前端故事线。 |
-| `department_animation_fixture_v0` | 本文档第 6 节 | 待建设 | 面向部门汇报和前端动画的 public-safe 推断 fixture。 |
+| `department_animation_fixture_v0` | 本文档第 6 节 | 已有最小输入，需继续迭代 | 面向部门汇报和前端动画的 public-safe curated/inferred fixture。 |
+| `department_live_generated_fixture_seed_v0` | [`examples/fixtures/department-live-generated-rollout-seed.public.json`](../../examples/fixtures/department-live-generated-rollout-seed.public.json) | 新增 seed | 从真实 `quota should-run`、`status`、`history` 跑出的 public-safe 摘要，专门测试真实噪声和 warning。 |
 
 ### 2.3 已对齐的实现
 
@@ -226,7 +227,10 @@ LoopX 的状态必须分两层讲清楚，否则部门汇报会混淆“事实�
 - commit 与 todo 的绑定还不够强。
 - 多 agent review/self-merge/rollback 关系需要从 PR、todo note、event 和 active state 里组合。
 
-所以前端不应直接假装历史完美，而应生成一个 public-safe 的 inferred fixture。
+所以前端不应直接假装历史完美，也不能只依赖手写的顺滑 fixture。正确策略是双轨：
+
+1. `curated/inferred fixture`：用 public-safe 证据和可审计推断补齐故事线，保证部门汇报能看懂三 agent lane、human gate、handoff、validation、PR/commit evidence。
+2. `live-generated seed fixture`：由真实 LoopX CLI/heartbeat 跑一阵子后压缩生成，只保留 public-safe 摘要，保证前端能承受真实 payload 大小、warning、缺字段、陈旧 projection、todo archive 压力和 no-user-gate-but-agent-must-run 等复杂形状。
 
 ## 6. 历史动画的推断补齐策略
 
@@ -234,7 +238,21 @@ LoopX 的状态必须分两层讲清楚，否则部门汇报会混淆“事实�
 
 ### 6.1 目标
 
-构造 `department_animation_fixture_v0`，用于部门汇报和前端演示。它不是新的源事实，只是从 public-safe 证据生成的展示 fixture。
+构造 `department_animation_fixture_v0` 和 `department_live_generated_fixture_seed_v0`，用于部门汇报和前端演示。二者都不是新的源事实：前者是从 public-safe 证据生成的展示 fixture，后者是真实 CLI 输出的脱敏摘要 seed。
+
+### 6.0 双轨 Fixture 原则
+
+| 类型 | 作用 | 来源 | 风险 | 前端用途 |
+| --- | --- | --- | --- | --- |
+| Curated / inferred fixture | 覆盖部门级叙事、三 lane、human gate、handoff、validation、PR evidence | rollout event、todo、PR、docs、用户明确决策、可审计推断 | 太顺滑，容易遮住真实控制面噪声 | demo story、视觉设计、关键节点验收 |
+| Live-generated seed fixture | 暴露真实 payload 规模、缺字段、warning、routing/noise、status/index 压力 | 真实 `loopx quota should-run`、`loopx status`、`loopx history` 跑一段时间后 public-safe 摘要 | 不保证故事完整，不能直接当 narrative | sufficiency check、抗噪声 smoke、dashboard fallback |
+
+验收不应是“有一个好看的 JSON”就结束。`P0-prep-2` 必须同时交付：
+
+- 一个 curated/inferred story fixture；
+- 一个 live-generated seed fixture；
+- 一个 smoke 同时验证两者；
+- 文档明确哪些字段是 observed，哪些是 inferred，哪些只是 frontend noise case。
 
 ### 6.2 可用证据
 
@@ -283,9 +301,14 @@ LoopX 的状态必须分两层讲清楚，否则部门汇报会混淆“事实�
 | `side_bypass` | 独立实现或验证 slice | 展示 claim、独立 worktree、small PR、自合并或交主控 review。 |
 | `product_capability` | 场景分析、协议抽象、前端/管理面 | 展示从用户产品反馈到 doc/protocol/todo，再到代码或 fixture 的闭环。 |
 
-`P0-prep-2` 的验收标准是：生成一个 fixture，至少覆盖三条 lane、一个 human gate、一个 handoff/review、一个 validation、一个 PR/commit evidence、一个 inferred dashed edge。
+`P0-prep-2` 的验收标准是：生成一组 fixture，至少覆盖三条 lane、一个 human gate、一个 handoff/review、一个 validation、一个 PR/commit evidence、一个 inferred dashed edge；并额外包含一个 live-generated seed，覆盖真实 `quota/status/history` 输出中的 payload size、warning、缺字段、todo index 和 no-user-gate-but-agent-must-run 形状。
 
-当前最小开发测试输入是 [`examples/fixtures/department-self-iteration-rollout.public.json`](../../examples/fixtures/department-self-iteration-rollout.public.json)，配套 smoke 是 [`examples/department-self-iteration-rollout-fixture-smoke.py`](../../examples/department-self-iteration-rollout-fixture-smoke.py)。这不是源事实 event ledger，只是 public-safe fixture；它的任务是让旁路前端先能开发和验证三 lane timeline，而不是等待完整历史复盘全部结构化。
+当前最小开发测试输入分两类：
+
+- Curated story：[`examples/fixtures/department-self-iteration-rollout.public.json`](../../examples/fixtures/department-self-iteration-rollout.public.json)
+- Live-generated seed：[`examples/fixtures/department-live-generated-rollout-seed.public.json`](../../examples/fixtures/department-live-generated-rollout-seed.public.json)
+
+配套 smoke 是 [`examples/department-self-iteration-rollout-fixture-smoke.py`](../../examples/department-self-iteration-rollout-fixture-smoke.py)。这些不是源事实 event ledger，只是 public-safe fixture；它们的任务是让旁路前端先能开发和验证三 lane timeline，同时不被真实控制面的 warning、缺字段和大 payload 打爆。
 
 ## 7. 长程任务可回滚能力
 
@@ -342,7 +365,7 @@ LoopX 的状态必须分两层讲清楚，否则部门汇报会混淆“事实�
 | 顺序 | Todo | 当前状态 | 目的 | 验收 |
 | --- | --- | --- | --- | --- |
 | 1 | `P0-prep-1` 补强 rollout event 字段 | done | 让三 agent todo/gate/status 转换能被重放。 | PR #602 已合入；event 支持 lane、transition、causality、handoff、code refs。 |
-| 2 | `P0-prep-2` 生成 public-safe 三 agent fixture | next, owned by `codex-product-capability` | 让前端和部门汇报有真实故事，不依赖私密日志。 | fixture 覆盖三 lane、human gate、handoff/review、validation、PR/commit、inferred edge。 |
+| 2 | `P0-prep-2` 生成 public-safe 三 agent fixture | raised bar, owned by `codex-product-capability` | 让前端和部门汇报既有真实故事，也能承受真实控制面噪声。 | curated fixture 覆盖三 lane、human gate、handoff/review、validation、PR/commit、inferred edge；live-generated seed 来自真实 CLI/heartbeat 摘要，覆盖 warning、缺字段、payload size 和 todo/routing 形状。 |
 | 3 | `P0-prep-3` 做 frontstage/status sufficiency check | deferred to `codex-side-bypass` after `P0-prep-2` | 先证明数据足够，再做 UI。 | smoke 能验证 projection 或 fixture 可渲染 todo flow、human gate、evidence、rollback hint。 |
 | 4 | `P0-1` 定义长程 Agent state protocol v0 | in progress | 稳定启动、过程、结局的源事实协议。 | 从本文档提炼成 schema/reference doc。 |
 | 5 | `P0-2` 收敛 interaction pattern catalog | in progress | 把杂散经验变成部门可讲的 14 个范式。 | catalog 增加一页式 priority map，或本文档被索引引用。 |
@@ -351,7 +374,7 @@ LoopX 的状态必须分两层讲清楚，否则部门汇报会混淆“事实�
 | 8 | `P0-5` 设计 global manager commands | open | 让用户像管理者一样查看全局进展、gate、风险和 agent 状态。 | 命令 spec 和只读 summary packet。 |
 | 9 | `P0-6` 产出部门级 review artifact | open | 把协议、证据、前端 demo、上线清单收敛成可汇报材料。 | 一页式汇报材料加 demo 链路。 |
 
-推进顺序不能倒过来。最容易走偏的是先做漂亮页面，最后发现历史状态无法支撑故事；所以先补 event、fixture、sufficiency check，再进入 UI polish。
+推进顺序不能倒过来。最容易走偏的是先做漂亮页面，最后发现历史状态无法支撑故事；所以先补 event、双轨 fixture、sufficiency check，再进入 UI polish。
 
 ## 10. 对部门汇报的一句话版本
 
