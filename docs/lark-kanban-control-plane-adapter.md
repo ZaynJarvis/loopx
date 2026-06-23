@@ -25,6 +25,39 @@ replace the executor runtime, quota guard, or future daemon lease model.
 The Kanban view groups by `Status`, so the board is the operator-facing
 control surface. Agent workers use the filtered `Worker Queue` view.
 
+## Operator View
+
+The human-facing Kanban card should stay deliberately small. Keep only these
+fields visible on the card:
+
+- `Task`
+- `Claim`
+- `Priority`
+- `User Gate`
+- `Evidence`
+- `Status`
+
+All other fields remain in the record detail and `All Tasks` grid. This keeps
+the first page light enough to scan while preserving complete task context for
+agents, handoff, audit, and recovery.
+
+The current `lark-cli base +view-set-card` shortcut only controls Kanban cover
+configuration, not the card field visibility list. Until that shortcut exists,
+configure the visible card fields in the Lark UI card settings panel and verify
+with:
+
+```bash
+lark-cli base +record-list \
+  --base-token <base> \
+  --table-id <table> \
+  --view-id Kanban \
+  --offset 0 \
+  --limit 10
+```
+
+The returned `fields` array should be the compact operator set above. The
+record detail still contains the full schema.
+
 ## Trigger Model
 
 Direct Base-to-local-agent triggering requires a reachable callback, local
@@ -73,12 +106,20 @@ python3 -m loopx.cli lark-kanban schema --format json
 python3 -m loopx.cli lark-kanban plan-create --base-name "LoopX Kanban POC"
 python3 -m loopx.cli lark-kanban create-board --base-name "LoopX Kanban POC" --execute
 python3 -m loopx.cli lark-kanban seed-task --base-token <base> --table-id <table> --execute
+python3 -m loopx.cli lark-kanban seed-cases --base-token <base> --table-id <table> --execute
 python3 -m loopx.cli lark-kanban heartbeat --base-token <base> --table-id <table> --execute-lark
 ```
 
 `create-board`, `seed-task`, and `heartbeat` are dry-run unless their explicit
 execute flags are set. Worker execution has its own gate,
 `--execute-worker`, and an allowlist gate, `--allow-command-prefix`.
+
+`seed-cases` creates one UX optimization task plus four feasibility cases:
+
+- a `notes.zaynjarvis.com` LoopX architecture/decision-note lane;
+- a P1/P2 human gate timeout lane with default fallback;
+- a cross-session compact-memory lane through external memory;
+- a quality-vs-token-and-attention-cost eval lane.
 
 ## Review Boundary
 
